@@ -130,17 +130,69 @@ async function llmTranslateOne(s, text, lang) {
 }
 
 // 谷歌翻译（免费网页端接口，无需 Key）
+// 主端点用 Chrome 内置翻译同款的 dict-chrome-ex，风控更宽松；
+// 失败时降级回 gtx 端点，仍被限流则给出明确提示
+const GOOGLE_RATE_LIMIT_MSG = '谷歌翻译接口被限流或拦截（免费接口的常见风控）。请稍等几分钟重试，或到「设置 → 翻译服务」切换为大模型翻译。';
+
+function parseGoogleT(data) {
+  // dict-chrome-ex 端点可能返回 ["译文"]、[["译文","源语言"]]、[[["译文"]]] 等多种形态
+  if (!Array.isArray(data) || !data.length) return null;
+  if (typeof data[0] === 'string') return data.join('');
+  if (Array.isArray(data[0])) {
+    const parts = data.map(x => {
+      if (typeof x === 'string') return x;
+      if (Array.isArray(x)) {
+        if (typeof x[0] === 'string') return x[0];
+        if (Array.isArray(x[0])) return (x[0][0] || '') + '';
+      }
+      return '';
+    });
+    const joined = parts.join('');
+    return joined || null;
+  }
+  return null;
+}
+
 async function googleTranslate(text, tl) {
-  const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${encodeURIComponent(tl)}&dt=t`;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-    body: 'q=' + encodeURIComponent(text)
-  });
-  if (!res.ok) throw new Error(`谷歌翻译请求失败 ${res.status}`);
-  const data = await res.json();
-  if (!Array.isArray(data) || !Array.isArray(data[0])) throw new Error('谷歌翻译返回格式异常');
-  return data[0].map(seg => (seg && seg[0]) || '').join('');
+  const endpoints = [
+    'https://clients5.google.com/translate_a/t?client=dict-chrome-ex&sl=auto&tl=' + encodeURIComponent(tl),
+    'https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=' + encodeURIComponent(tl) + '&dt=t'
+  ];
+  let lastErr = null;
+  for (const url of endpoints) {
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+        body: 'q=' + encodeURIComponent(text)
+      });
+      if (res.redirected && /\/sorry\//.test(res.url)) throw new Error('RATE_LIMITED');
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const ct = (res.headers.get('content-type') || '').toLowerCase();
+      if (!ct.includes('json') && !ct.includes('javascript')) throw new Error('RATE_LIMITED'); // 验证码页是 HTML
+      const data = await res.json();
+      let out = null;
+      if (url.includes('dict-chrome-ex')) {
+        out = parseGoogleT(data);
+      } else {
+        if (Array.isArray(data) && Array.isArray(data[0])) {
+          out = data[0].map(seg => (seg && seg[0]) || '').join('') || null;
+        }
+      }
+      if (out) return out;
+      throw new Error('返回格式异常');
+    } catch (e) {
+      if (e instanceof TypeError || /Failed to fetch/i.test(e.message || '')) {
+        // 重定向到验证码页且该域名无授权时，浏览器以 CORS 错误抛出
+        lastErr = new Error('RATE_LIMITED');
+      } else {
+        lastErr = e;
+      }
+      if (lastErr.message === 'RATE_LIMITED' && url === endpoints[endpoints.length - 1]) break;
+    }
+  }
+  if (lastErr && lastErr.message === 'RATE_LIMITED') throw new Error(GOOGLE_RATE_LIMIT_MSG);
+  throw new Error('谷歌翻译失败：' + ((lastErr && lastErr.message) || lastErr));
 }
 
 // ---------- 消息处理 ----------
@@ -228,7 +280,7 @@ async function handleMsg(msg) {
       if (need.length) {
         let firstErr = null; // 记录第一个失败原因，全部失败时透传给页面
         if (provider === 'google') {
-          const CONC = 3;
+          const CONC = 2; // 低并发，降低触发谷歌风控的概率
           for (let k = 0; k < need.length; k += CONC) {
             await Promise.all(need.slice(k, k + CONC).map(async n => {
               try {
