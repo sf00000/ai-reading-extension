@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "AI 翻译助手",
+  "version": "1.0.0",
+  "description": "网页划词/整页 AI 翻译与总结：支持 DeepSeek 等 OpenAI 兼容 API 与谷歌翻译，悬浮窗展示、可拖动，段落级缓存避免重复调用。",
+  "permissions": ["contextMenus", "storage", "unlimitedStorage", "activeTab", "scripting"],
+  "host_permissions": ["https://translate.googleapis.com/*"],
+  "optional_host_permissions": ["https://*/*"],
+  "commands": {
+    "translate-page": {
+      "suggested_key": { "default": "Alt+T" },
+      "description": "翻译当前页面"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "AI 翻译助手",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

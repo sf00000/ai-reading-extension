@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      width: 280px; padding: 12px;
+      font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+      font-size: 13px; color: #24292f; background: #fff;
+    }
+    .hdr { display: flex; align-items: center; margin-bottom: 12px; }
+    .hdr b { font-size: 14px; }
+    .hdr .spacer { flex: 1; }
+    .hdr a { color: #57606a; text-decoration: none; cursor: pointer; font-size: 16px; }
+    .hdr a:hover { color: #4f5ce5; }
+    button.act {
+      width: 100%; padding: 9px 0; margin-bottom: 8px;
+      border: none; border-radius: 8px; font-size: 13px; cursor: pointer;
+      background: #4f5ce5; color: #fff; font-family: inherit;
+      display: flex; align-items: center; justify-content: center; gap: 6px;
+    }
+    button.act:hover { background: #3e4ad1; }
+    button.act.secondary { background: #f0f1f5; color: #24292f; }
+    button.act.secondary:hover { background: #e4e6ee; }
+    .row { display: flex; align-items: center; gap: 8px; margin: 10px 0 4px; }
+    .row label { font-size: 12px; color: #57606a; white-space: nowrap; }
+    .row select {
+      flex: 1; padding: 4px 6px; border: 1px solid #d0d4da; border-radius: 6px;
+      font-size: 12px; font-family: inherit;
+    }
+    .meta { margin-top: 10px; padding-top: 10px; border-top: 1px solid #eee; font-size: 12px; color: #8b949e; line-height: 1.7; }
+    .meta b { color: #57606a; }
+  </style>
+</head>
+<body>
+  <div class="hdr">
+    <b>🤖 AI 翻译助手</b>
+    <span class="spacer"></span>
+    <a id="openOptions" title="设置">⚙️</a>
+  </div>
+  <button class="act" id="btnTranslate">🌐 翻译本页 / 恢复原文</button>
+  <button class="act secondary" id="btnSummary">📝 总结本页</button>
+  <div class="row">
+    <label>目标语言</label>
+    <select id="lang"></select>
+  </div>
+  <div class="meta" id="meta">加载中…</div>
+  <div class="meta">
+    💡 选中文字后 <b>右键 → AI 翻译助手</b> 可翻译/总结选区；快捷键 <b>Alt+T</b> 一键翻译整页。
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>AI 翻译助手 · 设置</title>
+  <style>
+    :root { color-scheme: light; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; padding: 32px 0 64px;
+      font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: #f3f4f8; color: #24292f; font-size: 14px;
+    }
+    .container { max-width: 640px; margin: 0 auto; padding: 0 20px; }
+    h1 { font-size: 20px; margin: 0 0 4px; }
+    .sub { color: #57606a; font-size: 13px; margin-bottom: 24px; }
+    .card {
+      background: #fff; border-radius: 12px; padding: 20px 22px;
+      box-shadow: 0 1px 3px rgba(0,0,0,.06); margin-bottom: 18px;
+    }
+    .card h2 { font-size: 15px; margin: 0 0 14px; }
+    .row { margin-bottom: 14px; }
+    label { display: block; font-weight: 600; font-size: 13px; margin-bottom: 5px; }
+    label .hint { font-weight: 400; color: #8b949e; }
+    input[type=text], input[type=password], select, textarea {
+      width: 100%; padding: 8px 10px; border: 1px solid #d0d4da; border-radius: 8px;
+      font-size: 13px; font-family: inherit; background: #fff; color: #24292f;
+    }
+    textarea { min-height: 130px; resize: vertical; line-height: 1.6; }
+    input:focus, select:focus, textarea:focus { outline: none; border-color: #4f5ce5; }
+    .inline { display: flex; gap: 10px; align-items: center; }
+    .inline > * { flex: 1; }
+    button.btn {
+      padding: 7px 18px; border: none; border-radius: 8px; font-size: 13px;
+      cursor: pointer; background: #4f5ce5; color: #fff; font-family: inherit;
+    }
+    button.btn:hover { background: #3e4ad1; }
+    button.btn.ghost { background: #fff; color: #24292f; border: 1px solid #d0d4da; }
+    button.btn.ghost:hover { border-color: #4f5ce5; color: #4f5ce5; }
+    .status { font-size: 13px; }
+    .status.ok { color: #1a7f37; }
+    .status.err { color: #c62828; }
+    .tip { font-size: 12px; color: #8b949e; line-height: 1.7; margin-top: 6px; }
+    .preset { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+    .preset button {
+      border: 1px solid #d0d4da; background: #f7f8fa; border-radius: 999px;
+      padding: 3px 12px; font-size: 12px; cursor: pointer; color: #57606a; font-family: inherit;
+    }
+    .preset button:hover { border-color: #4f5ce5; color: #4f5ce5; }
+    .savebar { position: sticky; bottom: 0; text-align: right; padding: 12px 0; }
+    .savebar .msg { margin-right: 12px; font-size: 13px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>⚙️ AI 翻译助手 · 设置</h1>
+    <div class="sub">配置翻译服务、目标语言、总结提示词与缓存</div>
+
+    <div class="card">
+      <h2>🌐 常规</h2>
+      <div class="row">
+        <label>目标语言</label>
+        <select id="targetLang"></select>
+      </div>
+      <div class="row">
+        <label>翻译服务 <span class="hint">—— 总结功能始终使用下方的大模型 API</span></label>
+        <select id="provider">
+          <option value="llm">大模型（DeepSeek 等，质量更好）</option>
+          <option value="google">谷歌翻译（免费、免 Key、速度快）</option>
+        </select>
+        <div class="tip">谷歌翻译走免费网页端接口，无需申请任何 Key，适合快速浏览；对术语、上下文要求高时建议用大模型。</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>🤖 大模型 API（OpenAI 兼容格式）</h2>
+      <div class="preset">
+        <button data-base="https://api.deepseek.com" data-model="deepseek-chat">DeepSeek</button>
+        <button data-base="https://api.moonshot.cn" data-model="moonshot-v1-8k">Kimi</button>
+        <button data-base="https://dashscope.aliyuncs.com/compatible-mode/v1" data-model="qwen-plus">通义千问</button>
+        <button data-base="https://open.bigmodel.cn/api/paas/v4" data-model="glm-4-flash">智谱 GLM</button>
+        <button data-base="https://api.openai.com/v1" data-model="gpt-4o-mini">OpenAI</button>
+      </div>
+      <div class="row">
+        <label>API 地址 <span class="hint">（填到 /v1 或服务商指定的根地址即可，自动拼接 /chat/completions）</span></label>
+        <input type="text" id="baseUrl" placeholder="https://api.deepseek.com">
+      </div>
+      <div class="row">
+        <label>API Key</label>
+        <input type="password" id="apiKey" placeholder="sk-...">
+      </div>
+      <div class="row">
+        <label>模型名称</label>
+        <input type="text" id="model" placeholder="deepseek-chat">
+      </div>
+      <div class="inline">
+        <button class="btn ghost" id="testBtn">测试连接</button>
+        <span class="status" id="testStatus"></span>
+      </div>
+      <div class="tip">API Key 仅保存在本机浏览器扩展存储中，请求只发往你填写的 API 地址。首次保存/测试时会请求对应域名的访问授权。</div>
+    </div>
+
+    <div class="card">
+      <h2>📝 总结设置</h2>
+      <div class="row">
+        <label>总结输出语言 <span class="hint">（悬浮窗里也可以随时切换）</span></label>
+        <select id="sumLang"></select>
+      </div>
+      <div class="row">
+        <label>总结提示词 <span class="hint">（支持占位符：{{lang}} 输出语言、{{text}} 正文）</span></label>
+        <textarea id="sumPrompt"></textarea>
+      </div>
+      <button class="btn ghost" id="resetPrompt">恢复默认提示词</button>
+    </div>
+
+    <div class="card">
+      <h2>💾 翻译缓存</h2>
+      <div class="tip" style="margin-top:0">
+        相同段落（按文本内容匹配）+ 相同目标语言 + 相同翻译服务的翻译/总结结果会自动缓存，
+        再次访问相同或包含相同段落的页面时直接取缓存，<b>不再重复调用大模型</b>（不消耗 token）。
+      </div>
+      <div class="inline" style="margin-top:12px">
+        <span class="status" id="cacheInfo">统计中…</span>
+        <button class="btn ghost" id="clearCache" style="flex:0">清空缓存</button>
+      </div>
+    </div>
+
+    <div class="savebar">
+      <span class="msg status" id="saveStatus"></span>
+      <button class="btn" id="saveBtn">保存设置</button>
+    </div>
+  </div>
+
+  <script src="options.js"></script>
+</body>
+</html>
