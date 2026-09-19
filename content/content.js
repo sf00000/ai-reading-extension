@@ -2,8 +2,15 @@
 // 悬浮窗（可拖动）、划词翻译/总结、整页段落级双语翻译
 
 (() => {
-  if (window.__aitrInjected) return;
+  // 扩展刷新/更新后，旧脚本的 chrome.runtime 已失效（context invalidated），
+  // 此时必须允许重新注入，并清掉旧实例残留的 UI
+  if (window.__aitrInjected && chrome.runtime && chrome.runtime.id) return;
   window.__aitrInjected = true;
+  document.querySelectorAll('#aitr-panel-host, #aitr-pill').forEach(n => n.remove());
+
+  // 扩展上下文是否仍有效（刷新扩展后旧脚本会失效）
+  const alive = () => !!(chrome.runtime && chrome.runtime.id);
+  const DEAD_MSG = '插件已更新，请刷新本页面（⌘R）后重试';
 
   const LANGS = ['简体中文', '繁體中文', 'English', '日本語', '한국어', 'Français', 'Deutsch', 'Español', 'Русский'];
 
@@ -70,6 +77,7 @@
 
   function ensurePanel() {
     if (panelHost) return;
+    document.querySelectorAll('#aitr-panel-host').forEach(n => n.remove()); // 清理孤儿残留
     panelHost = document.createElement('div');
     panelHost.id = 'aitr-panel-host';
     panelHost.style.cssText = 'position:fixed; z-index:2147483647; top:90px; right:48px;';
@@ -175,6 +183,11 @@
     setActiveTab(mode);
     setContent(`<div class="loading"><span class="spin"></span>${mode === 'summary' ? '正在总结…' : '正在翻译…'}</div>`);
     setMeta('');
+    if (!alive()) {
+      panelState.result = '';
+      setContent(`<div class="error">❌ ${DEAD_MSG}</div>`);
+      return;
+    }
     try {
       const resp = await chrome.runtime.sendMessage({ type: 'TR_TEXT', mode, text, lang, url: location.href });
       if (!resp || !resp.ok) throw new Error(resp && resp.error || '请求失败');
@@ -317,6 +330,11 @@
   async function translatePage() {
     if (pageState === 'running') return;
     if (pageState === 'done' && document.querySelector('[data-aitr-ins]')) { restorePage(); return; }
+    if (!alive()) {
+      showPill(DEAD_MSG);
+      setTimeout(hidePill, 4000);
+      return;
+    }
 
     let lang = '简体中文';
     try {

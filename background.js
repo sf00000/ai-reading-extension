@@ -226,6 +226,7 @@ async function handleMsg(msg) {
       }
 
       if (need.length) {
+        let firstErr = null; // 记录第一个失败原因，全部失败时透传给页面
         if (provider === 'google') {
           const CONC = 3;
           for (let k = 0; k < need.length; k += CONC) {
@@ -234,7 +235,7 @@ async function handleMsg(msg) {
                 const r = await googleTranslate(n.text, LANG_CODE[lang] || 'zh-CN');
                 results[n.i] = r;
                 await cacheSet(cacheKey(provider, lang, 'translate', n.text, 'x'), { r, ts: Date.now(), u: msg.url || '' });
-              } catch (e) { /* 单条失败留空 */ }
+              } catch (e) { firstErr = firstErr || String(e && e.message || e); }
             }));
           }
         } else {
@@ -254,16 +255,20 @@ async function handleMsg(msg) {
               const arr = await llmTranslateBatch(s, grp.map(n => n.text), lang);
               grp.forEach((n, j) => { results[n.i] = arr[j]; });
               done = true;
-            } catch (e) { /* 批量失败则逐条兜底 */ }
+            } catch (e) { firstErr = firstErr || String(e && e.message || e); }
             if (!done) {
               for (const n of grp) {
-                try { results[n.i] = await llmTranslateOne(s, n.text, lang); } catch (e) { /* 留空 */ }
+                try { results[n.i] = await llmTranslateOne(s, n.text, lang); } catch (e) { firstErr = firstErr || String(e && e.message || e); }
               }
             }
             for (const n of grp) {
               if (results[n.i]) await cacheSet(cacheKey(provider, lang, 'translate', n.text, 'x'), { r: results[n.i], ts: Date.now(), u: msg.url || '' });
             }
           }
+        }
+        // 全部失败时明确报错，而不是静默返回空结果
+        if (results.every(r => r === null || r === undefined)) {
+          return { ok: false, error: firstErr || '翻译请求全部失败' };
         }
       }
       return { ok: true, results, provider };
