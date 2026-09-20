@@ -253,13 +253,24 @@ async function handleMsg(msg) {
       if (hit) return { ok: true, result: hit.r, cached: true, provider };
 
       let r;
+      let usedProvider = provider;
       if (provider === 'google') {
-        r = await googleTranslate(msg.text, LANG_CODE[lang] || 'zh-CN');
+        try {
+          r = await googleTranslate(msg.text, LANG_CODE[lang] || 'zh-CN');
+        } catch (e) {
+          // 谷歌被限流时，若配置了大模型则自动降级，保证可用性
+          if (s.llm.apiKey && /限流/.test(String(e && e.message || e))) {
+            r = await llmTranslateOne(s, msg.text, lang);
+            usedProvider = 'llm(谷歌限流自动降级)';
+          } else {
+            throw e;
+          }
+        }
       } else {
         r = await llmTranslateOne(s, msg.text, lang);
       }
       await cacheSet(key, { r, ts: Date.now(), u: msg.url || '' });
-      return { ok: true, result: r, cached: false, provider };
+      return { ok: true, result: r, cached: false, provider: usedProvider };
     }
 
     // 整页批量：内容脚本按 8 条一组发来，未命中的再合并成一次 LLM 请求
@@ -279,23 +290,13 @@ async function handleMsg(msg) {
 
       if (need.length) {
         let firstErr = null; // 记录第一个失败原因，全部失败时透传给页面
-        if (provider === 'google') {
-          const CONC = 2; // 低并发，降低触发谷歌风控的概率
-          for (let k = 0; k < need.length; k += CONC) {
-            await Promise.all(need.slice(k, k + CONC).map(async n => {
-              try {
-                const r = await googleTranslate(n.text, LANG_CODE[lang] || 'zh-CN');
-                results[n.i] = r;
-                await cacheSet(cacheKey(provider, lang, 'translate', n.text, 'x'), { r, ts: Date.now(), u: msg.url || '' });
-              } catch (e) { firstErr = firstErr || String(e && e.message || e); }
-            }));
-          }
-        } else {
-          // 按条数 ≤8 且字符 ≤3500 分组
+
+        // LLM 批量处理（按条数 ≤8 且字符 ≤3500 分组，批量失败逐条兜底）
+        const processWithLlm = async (remaining, cacheProv) => {
           const groups = [];
           let g = [];
           let chars = 0;
-          for (const n of need) {
+          for (const n of remaining) {
             if (g.length >= 8 || chars + n.text.length > 3500) { if (g.length) groups.push(g); g = []; chars = 0; }
             g.push(n); chars += n.text.length;
           }
@@ -314,9 +315,29 @@ async function handleMsg(msg) {
               }
             }
             for (const n of grp) {
-              if (results[n.i]) await cacheSet(cacheKey(provider, lang, 'translate', n.text, 'x'), { r: results[n.i], ts: Date.now(), u: msg.url || '' });
+              if (results[n.i]) await cacheSet(cacheKey(cacheProv, lang, 'translate', n.text, 'x'), { r: results[n.i], ts: Date.now(), u: msg.url || '' });
             }
           }
+        };
+
+        if (provider === 'google') {
+          const CONC = 2; // 低并发，降低触发谷歌风控的概率
+          for (let k = 0; k < need.length; k += CONC) {
+            await Promise.all(need.slice(k, k + CONC).map(async n => {
+              try {
+                const r = await googleTranslate(n.text, LANG_CODE[lang] || 'zh-CN');
+                results[n.i] = r;
+                await cacheSet(cacheKey(provider, lang, 'translate', n.text, 'x'), { r, ts: Date.now(), u: msg.url || '' });
+              } catch (e) { firstErr = firstErr || String(e && e.message || e); }
+            }));
+          }
+          // 谷歌被限流时，配置了大模型的部分自动降级补齐
+          const stillNeed = need.filter(n => !results[n.i]);
+          if (stillNeed.length && s.llm.apiKey && /限流/.test(firstErr || '')) {
+            await processWithLlm(stillNeed, 'llm');
+          }
+        } else {
+          await processWithLlm(need, provider);
         }
         // 全部失败时明确报错，而不是静默返回空结果
         if (results.every(r => r === null || r === undefined)) {
