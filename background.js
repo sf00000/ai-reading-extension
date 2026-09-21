@@ -24,8 +24,12 @@ const DEFAULTS = {
   llmMigrated: false, // 旧版单一配置是否已迁移到模型列表
   summary: {
     lang: '', // 空 = 跟随目标语言
-    prompt: DEFAULT_SUMMARY_PROMPT
-  }
+    prompt: DEFAULT_SUMMARY_PROMPT // 旧版兼容，实际由 activeSummaryId 指向的模板提供
+  },
+  // 总结模板列表：[{id, name, prompt}]，activeSummaryId 指向当前使用的模板
+  summaryTemplates: [],
+  activeSummaryId: '',
+  summaryMigrated: false
 };
 
 const LANG_CODE = {
@@ -70,7 +74,18 @@ async function getSettings() {
     }];
     s.activeModelId = 'legacy-default';
   }
+  // 旧版单一总结提示词迁移为模板列表（设置页保存后 summaryMigrated 置 true）
+  if (!s.summaryMigrated && (!Array.isArray(s.summaryTemplates) || !s.summaryTemplates.length)) {
+    s.summaryTemplates = [{ id: 'tpl-default', name: '默认模板', prompt: s.summary.prompt || DEFAULT_SUMMARY_PROMPT }];
+    s.activeSummaryId = 'tpl-default';
+  }
   return s;
+}
+
+// 当前使用的总结模板（含降级：无模板时回退旧版 summary.prompt）
+function getActiveSummaryTemplate(s) {
+  const tpls = Array.isArray(s.summaryTemplates) ? s.summaryTemplates : [];
+  return tpls.find(t => t.id === s.activeSummaryId) || tpls[0] || null;
 }
 
 // 当前默认模型配置（含 Key 解析），llmChat 等统一从这里取
@@ -269,6 +284,26 @@ async function handleMsg(msg) {
       return { ok: true, result: r.trim() };
     }
 
+    // AI 生成总结模板：msg.need = 需求描述，msg.llm 可指定模型（不传则用默认模型）
+    case 'GEN_TEMPLATE': {
+      const s = await getSettings();
+      const need = String(msg.need || '').trim();
+      if (!need) return { ok: false, error: '请先描述模板需求' };
+      const override = msg.llm && msg.llm.baseUrl && msg.llm.model
+        ? { baseUrl: msg.llm.baseUrl, apiKey: msg.llm.apiKey || '', model: msg.llm.model }
+        : null;
+      const sys = `你是一位提示词工程师。用户正在为一款网页 AI 总结工具编写「总结提示词模板」，模板会被填入占位符后发送给大模型执行总结任务。请根据用户的需求描述，输出一个可直接使用的中文提示词模板。
+硬性要求：
+1. 必须包含占位符 {{lang}}（输出语言，写在指令部分）和 {{text}}（网页正文，单独放在模板末尾）；
+2. 模板需包含清晰的总结任务指令和输出结构要求（如条目数、侧重点）；
+3. 只输出模板本身，不要任何解释、引号或代码块包裹。`;
+      const r = await llmChat(s, [
+        { role: 'system', content: sys },
+        { role: 'user', content: '模板需求：' + need }
+      ], 1500, override);
+      return { ok: true, result: r.trim() };
+    }
+
     // 单文本：划词翻译 / 总结（含缓存）
     case 'TR_TEXT': {
       const s = await getSettings();
@@ -276,7 +311,8 @@ async function handleMsg(msg) {
 
       if (msg.mode === 'summary') {
         const sumLang = msg.lang || s.summary.lang || s.targetLang;
-        const tpl = (s.summary.prompt || DEFAULT_SUMMARY_PROMPT);
+        const atpl = getActiveSummaryTemplate(s);
+        const tpl = atpl ? atpl.prompt : (s.summary.prompt || DEFAULT_SUMMARY_PROMPT);
         const prompt = tpl.replaceAll('{{lang}}', sumLang).replaceAll('{{text}}', msg.text);
         const cacheProv = 'llm:' + (getActiveLlm(s).model || '');
         const key = cacheKey(cacheProv, sumLang, 'summary', msg.text, hashStr(tpl));

@@ -14,6 +14,8 @@ const $ = (id) => document.getElementById(id);
 let models = [];        // [{id, name, baseUrl, model, key}]
 let activeModelId = ''; // 默认模型 id
 let editingId = null;   // 正在编辑的模型 id（null = 新增）
+let templates = [];     // 总结模板 [{id, name, prompt}]
+let activeTplId = '';   // 当前选中的总结模板 id
 
 function esc(t) {
   return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -124,6 +126,7 @@ function renderModels() {
 
     list.appendChild(row);
   });
+  refreshGenModelSelect();
 }
 
 function openForm(m) {
@@ -216,7 +219,127 @@ async function saveModelFromForm() {
   flash($('saveStatus'), `✓ 已保存「${entry.name}」${activeModelId === entry.id ? '（默认模型）' : ''}`);
 }
 
+// ---------- 总结模板事件 ----------
+
+$('tplSelect').addEventListener('change', () => {
+  activeTplId = $('tplSelect').value;
+  fillTplEditor(activeTpl());
+});
+
+$('tplNew').addEventListener('click', () => {
+  const t = { id: uid(), name: '新模板', prompt: DEFAULT_PROMPT };
+  templates.push(t);
+  activeTplId = t.id;
+  persistTemplates();
+  renderTplSelect();
+  $('tplName').focus();
+  flash($('ioStatus') || $('saveStatus'), '✓ 已新建模板，编辑后点「保存」');
+});
+
+$('tplSave').addEventListener('click', async () => {
+  const t = activeTpl();
+  if (!t) { flash($('saveStatus'), '❌ 没有可保存的模板'); return; }
+  const name = $('tplName').value.trim();
+  const prompt = $('sumPrompt').value;
+  if (!prompt.trim()) { setStatus($('saveStatus'), '❌ 模板内容不能为空', false); return; }
+  t.name = name || '未命名模板';
+  t.prompt = prompt;
+  await persistTemplates();
+  renderTplSelect();
+  flash($('saveStatus'), `✓ 模板「${t.name}」已保存并生效`);
+});
+
+$('tplDel').addEventListener('click', async () => {
+  if (templates.length <= 1) { flash($('saveStatus'), '至少保留一个模板'); return; }
+  const t = activeTpl();
+  if (!t || !confirm(`删除模板「${t.name || '未命名'}」？`)) return;
+  templates = templates.filter(x => x.id !== t.id);
+  activeTplId = templates[0] ? templates[0].id : '';
+  await persistTemplates();
+  renderTplSelect();
+  flash($('saveStatus'), '✓ 已删除');
+});
+
+// AI 生成模板：用选定模型生成，生成后自动创建为新模板，用户可继续修改后保存
+$('genBtn').addEventListener('click', async () => {
+  const need = $('genNeed').value.trim();
+  if (!need) { setStatus($('genStatus'), '❌ 请先描述总结需求', false); return; }
+  const m = models.find(x => x.id === $('genModel').value) || models[0];
+  if (!m) { setStatus($('genStatus'), '❌ 请先在上方添加模型', false); return; }
+  setStatus($('genStatus'), '生成中…（使用 ' + (m.name || m.model) + '）', true);
+  const granted = await ensureOriginPermission(m.baseUrl);
+  if (!granted) { setStatus($('genStatus'), '❌ 未授权 API 域名访问', false); return; }
+  try {
+    const r = await chrome.runtime.sendMessage({
+      type: 'GEN_TEMPLATE',
+      need,
+      llm: { baseUrl: m.baseUrl, model: m.model, apiKey: m.key }
+    });
+    if (!r || !r.ok) { setStatus($('genStatus'), '❌ ' + (r && r.error || '生成失败'), false); return; }
+    const prompt = String(r.result || '').trim();
+    if (!prompt) { setStatus($('genStatus'), '❌ 模型返回为空，请重试或换模型', false); return; }
+    const t = { id: uid(), name: 'AI生成-' + need.slice(0, 10), prompt };
+    templates.push(t);
+    activeTplId = t.id;
+    await persistTemplates();
+    renderTplSelect();
+    $('tplName').focus();
+    $('tplName').select();
+    setStatus($('genStatus'), '✓ 已生成并创建为新模板，可修改后点「💾 保存」', true);
+  } catch (e) {
+    setStatus($('genStatus'), '❌ ' + e.message, false);
+  }
+});
+
 // ---------- 加载 / 保存 ----------
+
+// ---------- 总结模板 ----------
+
+async function persistTemplates() {
+  await chrome.runtime.sendMessage({
+    type: 'SAVE_SETTINGS',
+    settings: { summaryTemplates: templates, activeSummaryId: activeTplId, summaryMigrated: true }
+  });
+}
+
+function activeTpl() {
+  return templates.find(t => t.id === activeTplId) || templates[0] || null;
+}
+
+function fillTplEditor(t) {
+  $('tplName').value = t ? (t.name || '') : '';
+  $('sumPrompt').value = t ? (t.prompt || '') : '';
+}
+
+function renderTplSelect() {
+  const sel = $('tplSelect');
+  sel.innerHTML = '';
+  templates.forEach(t => {
+    const o = document.createElement('option');
+    o.value = t.id;
+    o.textContent = t.name || '(未命名)';
+    sel.appendChild(o);
+  });
+  const cur = activeTpl();
+  if (cur) sel.value = cur.id;
+  fillTplEditor(cur);
+}
+
+// 生成模型下拉：跟随模型列表变化，保留当前选择
+function refreshGenModelSelect() {
+  const sel = $('genModel');
+  const prev = sel.value;
+  sel.innerHTML = '';
+  models.forEach(m => {
+    const o = document.createElement('option');
+    o.value = m.id;
+    o.textContent = (m.name || m.model) + '（' + m.model + '）';
+    sel.appendChild(o);
+  });
+  if (prev && models.some(m => m.id === prev)) sel.value = prev;
+  else if (models.some(m => m.id === activeModelId)) sel.value = activeModelId;
+  else if (models.length) sel.value = models[0].id;
+}
 
 async function loadSettings() {
   const resp = await chrome.runtime.sendMessage({ type: 'GET_SETTINGS' });
@@ -227,9 +350,12 @@ async function loadSettings() {
   $('provider').value = s.provider;
   models = Array.isArray(s.models) ? s.models : [];
   activeModelId = s.activeModelId || (models[0] ? models[0].id : '');
+  templates = Array.isArray(s.summaryTemplates) ? s.summaryTemplates : [];
+  activeTplId = s.activeSummaryId || (templates[0] ? templates[0].id : '');
   $('sumLang').value = s.summary.lang || '';
-  $('sumPrompt').value = s.summary.prompt || DEFAULT_PROMPT;
   renderModels();
+  renderTplSelect();
+  refreshGenModelSelect();
   refreshCacheInfo();
 }
 
@@ -249,6 +375,9 @@ async function collectSettings() {
     models,
     activeModelId,
     llmMigrated: true,
+    summaryTemplates: templates,
+    activeSummaryId: activeTplId,
+    summaryMigrated: true,
     summary: {
       lang: $('sumLang').value,
       prompt: $('sumPrompt').value
@@ -379,7 +508,11 @@ $('mTest').addEventListener('click', () => {
   }, $('mTest'),
   (text, ok) => setStatus($('mTestStatus'), text, ok));
 });
-$('resetPrompt').addEventListener('click', () => { $('sumPrompt').value = DEFAULT_PROMPT; });
+// 将当前模板内容恢复为默认（需再点「保存」才生效）
+$('resetPrompt').addEventListener('click', () => {
+  $('sumPrompt').value = DEFAULT_PROMPT;
+  flash($('saveStatus'), '已填入默认模板内容，点「💾 保存」生效');
+});
 
 $('clearCache').addEventListener('click', async () => {
   await chrome.runtime.sendMessage({ type: 'TR_CLEAR_CACHE' });

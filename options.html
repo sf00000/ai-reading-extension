@@ -159,10 +159,39 @@
         <select id="sumLang"></select>
       </div>
       <div class="row">
-        <label>总结提示词 <span class="hint">（支持占位符：{{lang}} 输出语言、{{text}} 正文）</span></label>
+        <label>总结模板 <span class="hint">（选中即生效；翻译/总结时使用当前选中的模板）</span></label>
+        <div class="inline">
+          <select id="tplSelect" style="flex:1"></select>
+          <button class="btn ghost" id="tplNew" style="flex:0">＋ 新建</button>
+          <button class="btn ghost" id="tplSave" style="flex:0">💾 保存</button>
+          <button class="btn ghost" id="tplDel" style="flex:0">🗑 删除</button>
+        </div>
+      </div>
+      <div class="row">
+        <label>模板名称</label>
+        <input type="text" id="tplName" placeholder="如：学术论文总结">
+      </div>
+      <div class="row">
+        <label>模板内容 <span class="hint">（支持占位符：{{lang}} 输出语言、{{text}} 正文）</span></label>
         <textarea id="sumPrompt"></textarea>
       </div>
-      <button class="btn ghost" id="resetPrompt">恢复默认提示词</button>
+
+      <div id="genBox" style="border:1px dashed #d0d4da;border-radius:10px;padding:14px;background:#f9fafc;margin-bottom:14px;">
+        <div class="row" style="margin-bottom:10px;">
+          <label>🤖 AI 生成模板 <span class="hint">—— 描述你的总结需求，AI 帮你写模板，生成后可继续修改</span></label>
+          <textarea id="genNeed" style="min-height:56px" placeholder="例：总结学术论文，提取研究方法、实验数据结论和局限性，分要点输出"></textarea>
+        </div>
+        <div class="row">
+          <label>使用模型 <span class="hint">（上方模型列表中的任意一个）</span></label>
+          <select id="genModel"></select>
+        </div>
+        <div class="inline">
+          <button class="btn" id="genBtn" style="flex:0">生成模板</button>
+          <span class="status" id="genStatus" style="flex:1"></span>
+        </div>
+      </div>
+
+      <button class="btn ghost" id="resetPrompt">将内容恢复为默认模板</button>
     </div>
 
     <div class="card">
