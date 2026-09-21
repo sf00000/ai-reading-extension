@@ -15,7 +15,8 @@ const DEFAULTS = {
   llm: {
     baseUrl: 'https://api.deepseek.com',
     apiKey: '',
-    model: 'deepseek-chat'
+    model: 'deepseek-chat',
+    keys: {} // Key 按 API 地址绑定：{ [baseUrl]: apiKey }，切换服务商互不干扰
   },
   summary: {
     lang: '', // 空 = 跟随目标语言
@@ -79,14 +80,16 @@ async function cacheSet(key, val) {
 
 async function llmChat(s, messages, maxTokens) {
   const base = (s.llm.baseUrl || '').replace(/\/+$/, '');
-  if (!base || !s.llm.apiKey) throw new Error('未配置大模型 API，请到插件设置页填写 API 地址与 Key');
+  // Key 优先取该地址绑定的 Key，兼容旧版单一 Key
+  const apiKey = (s.llm.keys && s.llm.keys[base]) || s.llm.apiKey;
+  if (!base || !apiKey) throw new Error('未配置大模型 API，请到插件设置页填写 API 地址与 Key');
   let res;
   try {
     res = await fetch(base + '/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + s.llm.apiKey
+        'Authorization': 'Bearer ' + apiKey
       },
       body: JSON.stringify({
         model: s.llm.model,

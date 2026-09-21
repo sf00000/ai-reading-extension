@@ -38,7 +38,8 @@ async function loadSettings() {
   $('targetLang').value = s.targetLang;
   $('provider').value = s.provider;
   $('baseUrl').value = s.llm.baseUrl;
-  $('apiKey').value = s.llm.apiKey;
+  savedKeys = s.llm.keys || {};
+  $('apiKey').value = savedKeys[s.llm.baseUrl] || s.llm.apiKey || '';
   $('model').value = s.llm.model;
   $('sumLang').value = s.summary.lang || '';
   $('sumPrompt').value = s.summary.prompt || DEFAULT_PROMPT;
@@ -70,13 +71,22 @@ async function ensureOriginPermission(baseUrl) {
 }
 
 async function collectSettings() {
+  const baseUrl = $('baseUrl').value.trim().replace(/\/+$/, '');
+  const apiKey = $('apiKey').value.trim();
+  // Key 绑定到 API 地址：每个地址记住自己的 Key，切换服务商互不影响
+  const keys = Object.assign({}, savedKeys);
+  if (baseUrl) {
+    if (apiKey) keys[baseUrl] = apiKey;
+    else delete keys[baseUrl]; // 清空即删除该地址的 Key
+  }
   return {
     targetLang: $('targetLang').value,
     provider: $('provider').value,
     llm: {
-      baseUrl: $('baseUrl').value.trim().replace(/\/+$/, ''),
-      apiKey: $('apiKey').value.trim(),
-      model: $('model').value.trim()
+      baseUrl,
+      apiKey,
+      model: $('model').value.trim(),
+      keys
     },
     summary: {
       lang: $('sumLang').value,
@@ -125,6 +135,12 @@ const BUILTIN_PRESETS = Array.from(document.querySelectorAll('#presetList button
   .map(b => ({ name: b.textContent, baseUrl: b.dataset.base, model: b.dataset.model }));
 
 let customPresets = []; // 从设置里加载
+let savedKeys = {};     // 按 API 地址绑定的 Key：{ [baseUrl]: apiKey }
+
+// 按当前 API 地址带出对应的 Key
+function fillKeyForBaseUrl(baseUrl) {
+  $('apiKey').value = (savedKeys && savedKeys[baseUrl]) || '';
+}
 
 function renderPresets() {
   const list = $('presetList');
@@ -142,6 +158,7 @@ function renderPresets() {
     btn.addEventListener('click', () => {
       $('baseUrl').value = p.baseUrl;
       $('model').value = p.model;
+      fillKeyForBaseUrl(p.baseUrl); // 切换预设自动带出该地址的 Key
     });
     const del = document.createElement('button');
     del.textContent = '×';
@@ -200,7 +217,13 @@ document.querySelectorAll('.preset button[data-base]').forEach(btn => {
   btn.addEventListener('click', () => {
     $('baseUrl').value = btn.dataset.base;
     $('model').value = btn.dataset.model;
+    fillKeyForBaseUrl(btn.dataset.base); // 切换预设自动带出该地址的 Key
   });
+});
+
+// 手动修改 API 地址时，自动带出该地址的 Key
+$('baseUrl').addEventListener('change', () => {
+  fillKeyForBaseUrl($('baseUrl').value.trim().replace(/\/+$/, ''));
 });
 
 $('resetPrompt').addEventListener('click', () => {
