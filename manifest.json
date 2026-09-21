@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "AI 翻译助手",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "网页划词/整页 AI 翻译与总结：支持 DeepSeek 等 OpenAI 兼容 API 与谷歌翻译，悬浮窗展示、可拖动，段落级缓存避免重复调用。",
   "permissions": ["contextMenus", "storage", "unlimitedStorage", "activeTab", "scripting"],
   "host_permissions": [

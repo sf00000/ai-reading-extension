@@ -135,9 +135,11 @@
         <label style="font-weight:400;display:flex;align-items:center;gap:6px;font-size:13px;">
           <input type="checkbox" id="mDefault" style="width:auto;"> 保存后设为默认模型
         </label>
-        <div style="margin-top:12px;">
-          <button class="btn" id="mSave" style="margin-right:8px">保存</button>
+        <div style="margin-top:12px;display:flex;align-items:center;gap:8px;">
+          <button class="btn" id="mSave">保存</button>
+          <button class="btn ghost" id="mTest">测试连接</button>
           <button class="btn ghost" id="mCancel">取消</button>
+          <span class="status" id="mTestStatus" style="flex:1"></span>
         </div>
       </div>
 

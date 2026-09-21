@@ -113,8 +113,9 @@ async function cacheSet(key, val) {
 
 // ---------- API 调用 ----------
 
-async function llmChat(s, messages, maxTokens) {
-  const active = getActiveLlm(s);
+// llmOverride: 可选，{baseUrl, apiKey, model} —— 指定模型测试时传入，不传则用当前默认模型
+async function llmChat(s, messages, maxTokens, llmOverride) {
+  const active = llmOverride || getActiveLlm(s);
   const base = (active.baseUrl || '').replace(/\/+$/, '');
   const apiKey = active.apiKey;
   if (!base || !apiKey) throw new Error('未配置大模型 API，请到插件设置页添加模型并填写 Key');
@@ -260,7 +261,11 @@ async function handleMsg(msg) {
         const r = await googleTranslate('Hello, world!', 'zh-CN');
         return { ok: true, result: r };
       }
-      const r = await llmChat(s, [{ role: 'user', content: '请只回复两个字：成功' }], 20);
+      // msg.llm 存在时测试指定模型（表单未保存的配置 / 模型卡片单测），否则测默认模型
+      const override = msg.llm && msg.llm.baseUrl && msg.llm.model
+        ? { baseUrl: msg.llm.baseUrl, apiKey: msg.llm.apiKey || msg.llm.key || '', model: msg.llm.model }
+        : null;
+      const r = await llmChat(s, [{ role: 'user', content: '请只回复两个字：成功' }], 20, override);
       return { ok: true, result: r.trim() };
     }
 

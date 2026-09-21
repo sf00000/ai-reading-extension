@@ -79,8 +79,19 @@ function renderModels() {
     info.innerHTML = `
       <div class="mname">${esc(m.name || m.model)}<span class="mmodel">${esc(m.model)}</span>${m.id === activeModelId ? '<span class="badge">默认</span>' : ''}</div>
       <div class="murl">${esc(m.baseUrl)}</div>
-      <div class="mkey${m.key ? '' : ' warn'}">${m.key ? '✓ Key 已配置' : '⚠ 未配置 Key'}</div>`;
+      <div class="mkey${m.key ? '' : ' warn'}">${m.key ? '✓ Key 已配置' : '⚠ 未配置 Key'}</div>
+      <div class="mtest status" style="margin-top:2px;"></div>`;
     row.appendChild(info);
+
+    const bTest = document.createElement('button');
+    bTest.textContent = '测试';
+    bTest.addEventListener('click', () => {
+      const st = row.querySelector('.mtest');
+      st.textContent = '';
+      testModel({ baseUrl: m.baseUrl, model: m.model, key: m.key }, bTest,
+        (text, ok) => { st.textContent = text; st.className = 'mtest status ' + (ok ? 'ok' : 'err'); });
+    });
+    row.appendChild(bTest);
 
     if (m.id !== activeModelId) {
       const bUse = document.createElement('button');
@@ -140,6 +151,47 @@ async function ensureOriginPermission(baseUrl) {
     return await chrome.permissions.request({ origins: [origin] });
   } catch (e) {
     return false;
+  }
+}
+
+// 测试指定的模型配置：cfg = {baseUrl, model, key}
+// statusEl 可省略；按钮在测试期间禁用并显示进行中状态
+async function testModel(cfg, btn, showResult) {
+  const label = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = '测试中…'; }
+  const finish = () => { if (btn) { btn.disabled = false; btn.textContent = label; } };
+  if (!cfg.baseUrl || !cfg.model) {
+    finish();
+    showResult ? showResult('❌ 请先填写 API 地址和模型名称', false) : null;
+    return { ok: false, error: '请先填写 API 地址和模型名称' };
+  }
+  if (!cfg.key) {
+    finish();
+    showResult ? showResult('❌ 请先填写 API Key', false) : null;
+    return { ok: false, error: '请先填写 API Key' };
+  }
+  const granted = await ensureOriginPermission(cfg.baseUrl);
+  if (!granted) {
+    finish();
+    showResult ? showResult('❌ 未授权 API 域名访问', false) : null;
+    return { ok: false, error: '未授权 API 域名访问' };
+  }
+  try {
+    const r = await chrome.runtime.sendMessage({
+      type: 'TR_TEST',
+      llm: { baseUrl: cfg.baseUrl, model: cfg.model, apiKey: cfg.key }
+    });
+    finish();
+    if (r && r.ok) {
+      showResult ? showResult('✓ 连接成功：' + (r.result || '').slice(0, 40), true) : null;
+      return { ok: true };
+    }
+    showResult ? showResult('❌ ' + (r && r.error || '失败'), false) : null;
+    return { ok: false, error: r && r.error || '失败' };
+  } catch (e) {
+    finish();
+    showResult ? showResult('❌ ' + e.message, false) : null;
+    return { ok: false, error: e.message };
   }
 }
 
@@ -210,25 +262,12 @@ $('saveBtn').addEventListener('click', async () => {
   flash($('saveStatus'), '✓ 已保存');
 });
 
-$('testBtn').addEventListener('click', async () => {
+$('testBtn').addEventListener('click', () => {
   setStatus($('testStatus'), '测试中…', true);
-  const s = await collectSettings();
-  await chrome.runtime.sendMessage({ type: 'SAVE_SETTINGS', settings: s });
   const active = activeModel();
-  if (active && active.baseUrl && active.key) {
-    const granted = await ensureOriginPermission(active.baseUrl);
-    if (!granted) {
-      setStatus($('testStatus'), '❌ 未授权 API 域名访问', false);
-      return;
-    }
-  }
-  try {
-    const r = await chrome.runtime.sendMessage({ type: 'TR_TEST' });
-    if (r && r.ok) setStatus($('testStatus'), '✓ 连接成功：' + (r.result || '').slice(0, 40), true);
-    else setStatus($('testStatus'), '❌ ' + (r && r.error || '失败'), false);
-  } catch (e) {
-    setStatus($('testStatus'), '❌ ' + e.message, false);
-  }
+  if (!active) { setStatus($('testStatus'), '❌ 还没有添加模型', false); return; }
+  testModel({ baseUrl: active.baseUrl, model: active.model, key: active.key }, $('testBtn'),
+    (text, ok) => setStatus($('testStatus'), text, ok));
 });
 
 // 快速添加：预填表单
@@ -246,6 +285,16 @@ document.querySelectorAll('.preset button[data-base]').forEach(btn => {
 $('addModelBtn').addEventListener('click', () => openForm(null));
 $('mSave').addEventListener('click', saveModelFromForm);
 $('mCancel').addEventListener('click', closeForm);
+// 表单内测试：直接测当前填写的值，无需先保存
+$('mTest').addEventListener('click', () => {
+  $('mTestStatus').textContent = '';
+  testModel({
+    baseUrl: $('mBase').value.trim().replace(/\/+$/, ''),
+    model: $('mModel').value.trim(),
+    key: $('mKey').value.trim()
+  }, $('mTest'),
+  (text, ok) => setStatus($('mTestStatus'), text, ok));
+});
 $('resetPrompt').addEventListener('click', () => { $('sumPrompt').value = DEFAULT_PROMPT; });
 
 $('clearCache').addEventListener('click', async () => {
