@@ -201,7 +201,7 @@ async function saveModelFromForm() {
   const model = $('mModel').value.trim();
   const key = $('mKey').value.trim();
   if (!baseUrl || !model) {
-    setStatus($('testStatus'), '❌ 请至少填写 API 地址和模型名称', false);
+    setStatus($('mTestStatus'), '❌ 请至少填写 API 地址和模型名称', false);
     return;
   }
   const entry = { id: editingId || uid(), name: name || model, baseUrl, model, key };
@@ -260,14 +260,6 @@ $('saveBtn').addEventListener('click', async () => {
   const s = await collectSettings();
   await chrome.runtime.sendMessage({ type: 'SAVE_SETTINGS', settings: s });
   flash($('saveStatus'), '✓ 已保存');
-});
-
-$('testBtn').addEventListener('click', () => {
-  setStatus($('testStatus'), '测试中…', true);
-  const active = activeModel();
-  if (!active) { setStatus($('testStatus'), '❌ 还没有添加模型', false); return; }
-  testModel({ baseUrl: active.baseUrl, model: active.model, key: active.key }, $('testBtn'),
-    (text, ok) => setStatus($('testStatus'), text, ok));
 });
 
 // 快速添加：预填表单
