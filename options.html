@@ -143,7 +143,13 @@
         </div>
       </div>
 
-      <div class="tip">API Key 仅保存在本机浏览器扩展存储中，请求只发往对应 API 地址。首次测试会请求该域名的访问授权。</div>
+      <div class="inline" style="margin-top:12px;">
+        <button class="btn ghost" id="exportBtn" style="flex:0">📤 导出配置</button>
+        <button class="btn ghost" id="importBtn" style="flex:0">📥 导入配置</button>
+        <input type="file" id="importFile" accept="application/json,.json" style="display:none">
+        <span class="status" id="ioStatus" style="flex:1"></span>
+      </div>
+      <div class="tip">导出可自定义保存目录；API Key 以混淆格式存储（非明文）。导入时相同「网关+模型」的条目自动覆盖更新，导入后即可直接使用。</div>
     </div>
 
     <div class="card">

@@ -274,6 +274,98 @@ document.querySelectorAll('.preset button[data-base]').forEach(btn => {
   });
 });
 
+// ---------- 导出 / 导入（API Key 混淆存储，非明文） ----------
+
+// 混淆：与固定盐做 XOR 再 Base64。防止导出文件被直接读取/搜索到 Key，
+// 属于防君子不防小人的混淆（文件本身仍在导出者手里，可逆）。
+const EXPORT_SALT = 'aitr::v1::key-obf::7f3a';
+
+function xorString(str) {
+  const out = [];
+  for (let i = 0; i < str.length; i++) {
+    out.push(String.fromCharCode(str.charCodeAt(i) ^ EXPORT_SALT.charCodeAt(i % EXPORT_SALT.length)));
+  }
+  return out.join('');
+}
+function encodeKey(k) { return btoa(unescape(encodeURIComponent(xorString(k)))); }
+function decodeKey(s) { return xorString(decodeURIComponent(escape(atob(s)))); }
+
+$('exportBtn').addEventListener('click', async () => {
+  if (!models.length) { flash($('ioStatus'), '❌ 还没有可导出的模型'); return; }
+  const payload = {
+    app: 'ai-translate-extension',
+    format: 1,
+    exportedAt: new Date().toISOString(),
+    models: models.map(m => ({
+      name: m.name || '',
+      baseUrl: m.baseUrl || '',
+      model: m.model || '',
+      key: m.key ? encodeKey(m.key) : ''
+    }))
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  try {
+    await chrome.downloads.download({
+      url,
+      // saveAs: true 弹出系统保存对话框，由用户选择导出目录
+      filename: 'ai-translate-models-' + new Date().toISOString().slice(0, 10) + '.json',
+      saveAs: true,
+      conflictAction: 'uniquify'
+    });
+    flash($('ioStatus'), '✓ 已导出 ' + models.length + ' 个模型配置');
+  } catch (e) {
+    setStatus($('ioStatus'), '❌ 导出失败：' + e.message, false);
+  } finally {
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  }
+});
+
+$('importBtn').addEventListener('click', () => $('importFile').click());
+
+$('importFile').addEventListener('change', async (e) => {
+  const f = e.target.files[0];
+  e.target.value = '';
+  if (!f) return;
+  let data;
+  try {
+    data = JSON.parse(await f.text());
+  } catch (err) {
+    setStatus($('ioStatus'), '❌ 不是有效的配置文件', false);
+    return;
+  }
+  if (!data || data.app !== 'ai-translate-extension' || !Array.isArray(data.models)) {
+    setStatus($('ioStatus'), '❌ 文件格式不匹配（应为 AI 翻译助手导出的配置）', false);
+    return;
+  }
+  let added = 0, updated = 0;
+  for (const m of data.models) {
+    if (!m.baseUrl || !m.model) continue;
+    const entry = {
+      id: uid(),
+      name: m.name || m.model,
+      baseUrl: String(m.baseUrl).replace(/\/+$/, ''),
+      model: String(m.model),
+      key: m.key ? decodeKey(m.key) : ''
+    };
+    // 相同「网关+模型」视为同一条：覆盖名称与 Key
+    const idx = models.findIndex(x => x.baseUrl === entry.baseUrl && x.model === entry.model);
+    if (idx >= 0) {
+      entry.id = models[idx].id;
+      models[idx] = entry;
+      updated++;
+    } else {
+      models.push(entry);
+      added++;
+    }
+  }
+  // 没有默认模型时，取第一个导入项作为默认，导入即可用
+  if (!activeModel() && models.length) activeModelId = models[0].id;
+  await persistModels();
+  renderModels();
+  flash($('ioStatus'), `✓ 导入完成：新增 ${added} 个，更新 ${updated} 个`);
+});
+
 $('addModelBtn').addEventListener('click', () => openForm(null));
 $('mSave').addEventListener('click', saveModelFromForm);
 $('mCancel').addEventListener('click', closeForm);
