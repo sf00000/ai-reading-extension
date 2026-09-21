@@ -16,13 +16,16 @@ const DEFAULTS = {
     baseUrl: 'https://api.deepseek.com',
     apiKey: '',
     model: 'deepseek-chat',
-    keys: {} // Key 按 API 地址绑定：{ [baseUrl]: apiKey }，切换服务商互不干扰
+    keys: {} // 旧版兼容：{ [baseUrl]: apiKey }
   },
+  // 模型列表管理：[{id, name, baseUrl, model, key}]
+  models: [],
+  activeModelId: '', // 默认（当前使用）的模型 id
+  llmMigrated: false, // 旧版单一配置是否已迁移到模型列表
   summary: {
     lang: '', // 空 = 跟随目标语言
     prompt: DEFAULT_SUMMARY_PROMPT
-  },
-  presets: [] // 用户自定义 API 预设（公司中转站等）：[{name, baseUrl, model}]
+  }
 };
 
 const LANG_CODE = {
@@ -56,7 +59,39 @@ async function getSettings() {
     llm: Object.assign({}, DEFAULTS.llm, saved.llm || {}),
     summary: Object.assign({}, DEFAULTS.summary, saved.summary || {})
   });
+  // 旧版单一配置迁移为模型列表（只迁移一次，之后由用户在设置页管理）
+  if (!s.llmMigrated && (!Array.isArray(s.models) || !s.models.length) && s.llm.baseUrl) {
+    s.models = [{
+      id: 'legacy-default',
+      name: '默认模型',
+      baseUrl: s.llm.baseUrl,
+      model: s.llm.model,
+      key: (s.llm.keys && s.llm.keys[s.llm.baseUrl]) || s.llm.apiKey || ''
+    }];
+    s.activeModelId = 'legacy-default';
+  }
   return s;
+}
+
+// 当前默认模型配置（含 Key 解析），llmChat 等统一从这里取
+function getActiveLlm(s) {
+  const list = Array.isArray(s.models) ? s.models : [];
+  if (list.length) {
+    const active = list.find(m => m.id === s.activeModelId) || list[0];
+    return {
+      baseUrl: active.baseUrl || '',
+      apiKey: active.key || '',
+      model: active.model || '',
+      name: active.name || ''
+    };
+  }
+  // 无模型列表时回退旧字段
+  return {
+    baseUrl: s.llm.baseUrl || '',
+    apiKey: (s.llm.keys && s.llm.keys[s.llm.baseUrl]) || s.llm.apiKey || '',
+    model: s.llm.model || '',
+    name: '默认模型'
+  };
 }
 
 // ---------- 缓存 ----------
@@ -79,10 +114,10 @@ async function cacheSet(key, val) {
 // ---------- API 调用 ----------
 
 async function llmChat(s, messages, maxTokens) {
-  const base = (s.llm.baseUrl || '').replace(/\/+$/, '');
-  // Key 优先取该地址绑定的 Key，兼容旧版单一 Key
-  const apiKey = (s.llm.keys && s.llm.keys[base]) || s.llm.apiKey;
-  if (!base || !apiKey) throw new Error('未配置大模型 API，请到插件设置页填写 API 地址与 Key');
+  const active = getActiveLlm(s);
+  const base = (active.baseUrl || '').replace(/\/+$/, '');
+  const apiKey = active.apiKey;
+  if (!base || !apiKey) throw new Error('未配置大模型 API，请到插件设置页添加模型并填写 Key');
   let res;
   try {
     res = await fetch(base + '/chat/completions', {
@@ -92,7 +127,7 @@ async function llmChat(s, messages, maxTokens) {
         'Authorization': 'Bearer ' + apiKey
       },
       body: JSON.stringify({
-        model: s.llm.model,
+        model: active.model,
         messages,
         temperature: 0.3,
         max_tokens: maxTokens || 4096
@@ -207,7 +242,7 @@ async function handleMsg(msg) {
       return { ok: true };
 
     case 'GET_SETTINGS':
-      return { ok: true, settings: await getSettings() };
+      return { ok: true, settings: await getSettings(), activeLlm: getActiveLlm(await getSettings()) };
 
     case 'SAVE_SETTINGS': {
       const cur = await getSettings();
@@ -238,7 +273,8 @@ async function handleMsg(msg) {
         const sumLang = msg.lang || s.summary.lang || s.targetLang;
         const tpl = (s.summary.prompt || DEFAULT_SUMMARY_PROMPT);
         const prompt = tpl.replaceAll('{{lang}}', sumLang).replaceAll('{{text}}', msg.text);
-        const key = cacheKey('llm', sumLang, 'summary', msg.text, hashStr(tpl));
+        const cacheProv = 'llm:' + (getActiveLlm(s).model || '');
+        const key = cacheKey(cacheProv, sumLang, 'summary', msg.text, hashStr(tpl));
         const hit = await cacheGet(key);
         if (hit) return { ok: true, result: hit.r, cached: true };
         const r = await llmChat(s, [
@@ -250,9 +286,11 @@ async function handleMsg(msg) {
         return { ok: true, result: r, cached: false };
       }
 
-      // 翻译
+      // 翻译（缓存按服务+模型区分，换模型后同段会重新翻译）
       const provider = msg.provider || s.provider;
-      const key = cacheKey(provider, lang, 'translate', msg.text, 'x');
+      const active = getActiveLlm(s);
+      const cacheProv = provider === 'google' ? 'google' : 'llm:' + (active.model || '');
+      const key = cacheKey(cacheProv, lang, 'translate', msg.text, 'x');
       const hit = await cacheGet(key);
       if (hit) return { ok: true, result: hit.r, cached: true, provider };
 
@@ -324,6 +362,8 @@ async function handleMsg(msg) {
           }
         };
 
+        const llmCacheProv = 'llm:' + (getActiveLlm(s).model || '');
+
         if (provider === 'google') {
           const CONC = 2; // 低并发，降低触发谷歌风控的概率
           for (let k = 0; k < need.length; k += CONC) {
@@ -337,11 +377,11 @@ async function handleMsg(msg) {
           }
           // 谷歌被限流时，配置了大模型的部分自动降级补齐
           const stillNeed = need.filter(n => !results[n.i]);
-          if (stillNeed.length && s.llm.apiKey && /限流/.test(firstErr || '')) {
-            await processWithLlm(stillNeed, 'llm');
+          if (stillNeed.length && getActiveLlm(s).apiKey && /限流/.test(firstErr || '')) {
+            await processWithLlm(stillNeed, llmCacheProv);
           }
         } else {
-          await processWithLlm(need, provider);
+          await processWithLlm(need, llmCacheProv);
         }
         // 全部失败时明确报错，而不是静默返回空结果
         if (results.every(r => r === null || r === undefined)) {

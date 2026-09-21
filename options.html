@@ -49,6 +49,32 @@
     .preset button:hover { border-color: #4f5ce5; color: #4f5ce5; }
     .savebar { position: sticky; bottom: 0; text-align: right; padding: 12px 0; }
     .savebar .msg { margin-right: 12px; font-size: 13px; }
+    .model-row {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 14px; border: 1px solid #e6e8ec; border-radius: 10px;
+      margin-bottom: 8px; background: #fff;
+    }
+    .model-row.active { border-color: #4f5ce5; background: #f5f6ff; }
+    .model-row .minfo { flex: 1; min-width: 0; }
+    .model-row .mname { font-weight: 600; font-size: 13px; }
+    .model-row .mmodel {
+      font-size: 12px; color: #4f5ce5; background: rgba(79,92,229,.08);
+      padding: 1px 8px; border-radius: 999px; margin-left: 6px;
+    }
+    .model-row .badge {
+      font-size: 11px; color: #fff; background: #4f5ce5;
+      padding: 1px 8px; border-radius: 999px; margin-left: 6px; font-weight: 400;
+    }
+    .model-row .murl { font-size: 12px; color: #8b949e; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .model-row .mkey { font-size: 12px; color: #1a7f37; margin-top: 2px; }
+    .model-row .mkey.warn { color: #c62828; }
+    .model-row button {
+      border: 1px solid #d0d4da; background: #fff; color: #57606a;
+      border-radius: 6px; padding: 3px 10px; font-size: 12px; cursor: pointer;
+      white-space: nowrap; font-family: inherit;
+    }
+    .model-row button:hover { border-color: #4f5ce5; color: #4f5ce5; }
+    .model-row button.del:hover { border-color: #c62828; color: #c62828; }
   </style>
 </head>
 <body>
@@ -73,48 +99,53 @@
     </div>
 
     <div class="card">
-      <h2>🤖 大模型 API（OpenAI 兼容格式）</h2>
-      <div class="preset" id="presetList">
-        <button data-base="https://api.deepseek.com" data-model="deepseek-chat">DeepSeek</button>
-        <button data-base="https://api.moonshot.cn" data-model="moonshot-v1-8k">Kimi</button>
-        <button data-base="https://dashscope.aliyuncs.com/compatible-mode/v1" data-model="qwen-plus">通义千问</button>
-        <button data-base="https://open.bigmodel.cn/api/paas/v4" data-model="glm-4-flash">智谱 GLM</button>
-        <button data-base="https://api.openai.com/v1" data-model="gpt-4o-mini">OpenAI</button>
-        <button id="addPresetBtn" title="添加自定义预设（如公司中转站/网关）">＋ 自定义</button>
+      <h2>🤖 模型 API 管理</h2>
+      <div class="tip" style="margin-top:0;margin-bottom:12px;">
+        可添加多个常用模型 API（公司中转站、DeepSeek 等），每个模型独立保存 Key；
+        点「设为默认」即切换当前翻译/总结使用的模型。
       </div>
-      <div id="presetForm" style="display:none;border:1px solid #e6e8ec;border-radius:8px;padding:12px;margin-bottom:14px;background:#f9fafc;">
+      <div id="modelList"></div>
+      <div class="preset" style="margin-top:10px;">
+        <span style="font-size:12px;color:#8b949e;align-self:center;">快速添加：</span>
+        <button data-name="DeepSeek" data-base="https://api.deepseek.com" data-model="deepseek-chat">DeepSeek</button>
+        <button data-name="Kimi" data-base="https://api.moonshot.cn" data-model="moonshot-v1-8k">Kimi</button>
+        <button data-name="通义千问" data-base="https://dashscope.aliyuncs.com/compatible-mode/v1" data-model="qwen-plus">通义千问</button>
+        <button data-name="智谱 GLM" data-base="https://open.bigmodel.cn/api/paas/v4" data-model="glm-4-flash">智谱 GLM</button>
+        <button data-name="OpenAI" data-base="https://api.openai.com/v1" data-model="gpt-4o-mini">OpenAI</button>
+        <button id="addModelBtn">＋ 自定义模型</button>
+      </div>
+
+      <div id="modelForm" style="display:none;border:1px solid #e6e8ec;border-radius:10px;padding:14px;margin-top:12px;background:#f9fafc;">
         <div class="row">
-          <label>预设名称 <span class="hint">（如：公司中转站）</span></label>
-          <input type="text" id="pName" placeholder="公司中转站">
+          <label>名称 <span class="hint">（随意，方便识别）</span></label>
+          <input type="text" id="mName" placeholder="公司中转站 / DeepSeek…">
         </div>
         <div class="row">
-          <label>API 地址</label>
-          <input type="text" id="pBase" placeholder="https://llm-gateway.company.com/v1">
+          <label>API 地址 <span class="hint">（OpenAI 兼容，自动拼接 /chat/completions）</span></label>
+          <input type="text" id="mBase" placeholder="https://llm-gateway.company.com/v1">
         </div>
         <div class="row">
-          <label>模型名称 <span class="hint">（多个可用逗号分隔，会生成多个预设）</span></label>
-          <input type="text" id="pModel" placeholder="gpt-4o, claude-sonnet-4">
+          <label>模型名称 <span class="hint">（如 gpt-4o、deepseek-chat）</span></label>
+          <input type="text" id="mModel" placeholder="gpt-4o-mini">
         </div>
-        <button class="btn" id="pSave" style="margin-right:8px">保存预设</button>
-        <button class="btn ghost" id="pCancel">取消</button>
+        <div class="row">
+          <label>API Key</label>
+          <input type="password" id="mKey" placeholder="sk-…（仅保存在本机）">
+        </div>
+        <label style="font-weight:400;display:flex;align-items:center;gap:6px;font-size:13px;">
+          <input type="checkbox" id="mDefault" style="width:auto;"> 保存后设为默认模型
+        </label>
+        <div style="margin-top:12px;">
+          <button class="btn" id="mSave" style="margin-right:8px">保存</button>
+          <button class="btn ghost" id="mCancel">取消</button>
+        </div>
       </div>
-      <div class="row">
-        <label>API 地址 <span class="hint">（填到 /v1 或服务商指定的根地址即可，自动拼接 /chat/completions）</span></label>
-        <input type="text" id="baseUrl" placeholder="https://api.deepseek.com">
-      </div>
-      <div class="row">
-        <label>API Key</label>
-        <input type="password" id="apiKey" placeholder="sk-...">
-      </div>
-      <div class="row">
-        <label>模型名称</label>
-        <input type="text" id="model" placeholder="deepseek-chat">
-      </div>
-      <div class="inline">
-        <button class="btn ghost" id="testBtn">测试连接</button>
+
+      <div class="inline" style="margin-top:14px">
+        <button class="btn ghost" id="testBtn" style="flex:0">测试连接（默认模型）</button>
         <span class="status" id="testStatus"></span>
       </div>
-      <div class="tip">API Key 仅保存在本机浏览器扩展存储中，请求只发往你填写的 API 地址。首次保存/测试时会请求对应域名的访问授权。</div>
+      <div class="tip">API Key 仅保存在本机浏览器扩展存储中，请求只发往对应 API 地址。首次测试会请求该域名的访问授权。</div>
     </div>
 
     <div class="card">

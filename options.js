@@ -1,4 +1,4 @@
-// AI 翻译助手 - 设置页逻辑
+// AI 翻译助手 - 设置页逻辑（模型列表管理版）
 
 const LANGS = ['简体中文', '繁體中文', 'English', '日本語', '한국어', 'Français', 'Deutsch', 'Español', 'Русский'];
 const DEFAULT_PROMPT = `请使用{{lang}}总结以下内容。要求：
@@ -10,6 +10,28 @@ const DEFAULT_PROMPT = `请使用{{lang}}总结以下内容。要求：
 {{text}}`;
 
 const $ = (id) => document.getElementById(id);
+
+let models = [];        // [{id, name, baseUrl, model, key}]
+let activeModelId = ''; // 默认模型 id
+let editingId = null;   // 正在编辑的模型 id（null = 新增）
+
+function esc(t) {
+  return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function uid() {
+  return 'm' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+}
+
+function setStatus(el, text, ok) {
+  el.textContent = text;
+  el.className = 'status ' + (ok ? 'ok' : 'err');
+}
+
+function flash(el, text) {
+  setStatus(el, text, true);
+  setTimeout(() => { el.textContent = ''; }, 2500);
+}
 
 function fillLangSelect(sel, withFollow) {
   sel.innerHTML = '';
@@ -25,39 +47,90 @@ function fillLangSelect(sel, withFollow) {
   });
 }
 
-function setStatus(el, text, ok) {
-  el.textContent = text;
-  el.className = 'status ' + (ok ? 'ok' : 'err');
+// ---------- 模型列表 ----------
+
+function activeModel() {
+  return models.find(m => m.id === activeModelId) || models[0] || null;
 }
 
-async function loadSettings() {
-  const resp = await chrome.runtime.sendMessage({ type: 'GET_SETTINGS' });
-  const s = resp.settings;
-  fillLangSelect($('targetLang'), false);
-  fillLangSelect($('sumLang'), true);
-  $('targetLang').value = s.targetLang;
-  $('provider').value = s.provider;
-  $('baseUrl').value = s.llm.baseUrl;
-  savedKeys = s.llm.keys || {};
-  $('apiKey').value = savedKeys[s.llm.baseUrl] || s.llm.apiKey || '';
-  $('model').value = s.llm.model;
-  $('sumLang').value = s.summary.lang || '';
-  $('sumPrompt').value = s.summary.prompt || DEFAULT_PROMPT;
-  customPresets = Array.isArray(s.presets) ? s.presets : [];
-  renderPresets();
-  refreshCacheInfo();
+async function persistModels() {
+  await chrome.runtime.sendMessage({
+    type: 'SAVE_SETTINGS',
+    settings: { models, activeModelId, llmMigrated: true }
+  });
 }
 
-async function refreshCacheInfo() {
-  try {
-    const r = await chrome.runtime.sendMessage({ type: 'TR_CACHE_INFO' });
-    $('cacheInfo').textContent = `当前缓存 ${r.count} 条，约 ${r.sizeKB} KB`;
-  } catch (e) {
-    $('cacheInfo').textContent = '缓存统计失败';
+function renderModels() {
+  const list = $('modelList');
+  list.innerHTML = '';
+  if (!models.length) {
+    const empty = document.createElement('div');
+    empty.className = 'tip';
+    empty.textContent = '还没有添加模型，点下方「快速添加」或「＋ 自定义模型」开始。';
+    list.appendChild(empty);
+    return;
   }
+  models.forEach(m => {
+    const row = document.createElement('div');
+    row.className = 'model-row' + (m.id === activeModelId ? ' active' : '');
+
+    const info = document.createElement('div');
+    info.className = 'minfo';
+    info.innerHTML = `
+      <div class="mname">${esc(m.name || m.model)}<span class="mmodel">${esc(m.model)}</span>${m.id === activeModelId ? '<span class="badge">默认</span>' : ''}</div>
+      <div class="murl">${esc(m.baseUrl)}</div>
+      <div class="mkey${m.key ? '' : ' warn'}">${m.key ? '✓ Key 已配置' : '⚠ 未配置 Key'}</div>`;
+    row.appendChild(info);
+
+    if (m.id !== activeModelId) {
+      const bUse = document.createElement('button');
+      bUse.textContent = '设为默认';
+      bUse.addEventListener('click', async () => {
+        activeModelId = m.id;
+        await persistModels();
+        renderModels();
+        flash($('saveStatus'), `✓ 已将「${m.name || m.model}」设为默认模型`);
+      });
+      row.appendChild(bUse);
+    }
+
+    const bEdit = document.createElement('button');
+    bEdit.textContent = '编辑';
+    bEdit.addEventListener('click', () => openForm(m));
+    row.appendChild(bEdit);
+
+    const bDel = document.createElement('button');
+    bDel.className = 'del';
+    bDel.textContent = '删除';
+    bDel.addEventListener('click', async () => {
+      if (!confirm(`删除「${m.name || m.model}」？`)) return;
+      models = models.filter(x => x.id !== m.id);
+      if (activeModelId === m.id) activeModelId = models[0] ? models[0].id : '';
+      await persistModels();
+      renderModels();
+    });
+    row.appendChild(bDel);
+
+    list.appendChild(row);
+  });
 }
 
-// 请求 API 域名访问授权（MV3 下后台 fetch 需要 host permission）
+function openForm(m) {
+  editingId = m && m.id ? m.id : null;
+  $('mName').value = m ? (m.name || '') : '';
+  $('mBase').value = m ? (m.baseUrl || '') : '';
+  $('mModel').value = m ? (m.model || '') : '';
+  $('mKey').value = m ? (m.key || '') : '';
+  $('mDefault').checked = !editingId; // 新增默认勾选设为默认
+  $('modelForm').style.display = '';
+  $('mName').focus();
+}
+
+function closeForm() {
+  $('modelForm').style.display = 'none';
+  editingId = null;
+}
+
 async function ensureOriginPermission(baseUrl) {
   try {
     const u = new URL(baseUrl);
@@ -70,24 +143,60 @@ async function ensureOriginPermission(baseUrl) {
   }
 }
 
-async function collectSettings() {
-  const baseUrl = $('baseUrl').value.trim().replace(/\/+$/, '');
-  const apiKey = $('apiKey').value.trim();
-  // Key 绑定到 API 地址：每个地址记住自己的 Key，切换服务商互不影响
-  const keys = Object.assign({}, savedKeys);
-  if (baseUrl) {
-    if (apiKey) keys[baseUrl] = apiKey;
-    else delete keys[baseUrl]; // 清空即删除该地址的 Key
+async function saveModelFromForm() {
+  const name = $('mName').value.trim();
+  const baseUrl = $('mBase').value.trim().replace(/\/+$/, '');
+  const model = $('mModel').value.trim();
+  const key = $('mKey').value.trim();
+  if (!baseUrl || !model) {
+    setStatus($('testStatus'), '❌ 请至少填写 API 地址和模型名称', false);
+    return;
   }
+  const entry = { id: editingId || uid(), name: name || model, baseUrl, model, key };
+  const idx = models.findIndex(m => m.id === entry.id);
+  if (idx >= 0) models[idx] = entry; else models.push(entry);
+  if ($('mDefault').checked || models.length === 1) activeModelId = entry.id;
+
+  await ensureOriginPermission(baseUrl);
+  await persistModels();
+  renderModels();
+  closeForm();
+  flash($('saveStatus'), `✓ 已保存「${entry.name}」${activeModelId === entry.id ? '（默认模型）' : ''}`);
+}
+
+// ---------- 加载 / 保存 ----------
+
+async function loadSettings() {
+  const resp = await chrome.runtime.sendMessage({ type: 'GET_SETTINGS' });
+  const s = resp.settings;
+  fillLangSelect($('targetLang'), false);
+  fillLangSelect($('sumLang'), true);
+  $('targetLang').value = s.targetLang;
+  $('provider').value = s.provider;
+  models = Array.isArray(s.models) ? s.models : [];
+  activeModelId = s.activeModelId || (models[0] ? models[0].id : '');
+  $('sumLang').value = s.summary.lang || '';
+  $('sumPrompt').value = s.summary.prompt || DEFAULT_PROMPT;
+  renderModels();
+  refreshCacheInfo();
+}
+
+async function refreshCacheInfo() {
+  try {
+    const r = await chrome.runtime.sendMessage({ type: 'TR_CACHE_INFO' });
+    $('cacheInfo').textContent = `当前缓存 ${r.count} 条，约 ${r.sizeKB} KB`;
+  } catch (e) {
+    $('cacheInfo').textContent = '缓存统计失败';
+  }
+}
+
+async function collectSettings() {
   return {
     targetLang: $('targetLang').value,
     provider: $('provider').value,
-    llm: {
-      baseUrl,
-      apiKey,
-      model: $('model').value.trim(),
-      keys
-    },
+    models,
+    activeModelId,
+    llmMigrated: true,
     summary: {
       lang: $('sumLang').value,
       prompt: $('sumPrompt').value
@@ -97,24 +206,17 @@ async function collectSettings() {
 
 $('saveBtn').addEventListener('click', async () => {
   const s = await collectSettings();
-  if (s.llm.apiKey && s.llm.baseUrl) {
-    const granted = await ensureOriginPermission(s.llm.baseUrl);
-    if (!granted) {
-      setStatus($('saveStatus'), '⚠️ 未授权 API 域名，调用可能被浏览器拦截', false);
-    }
-  }
   await chrome.runtime.sendMessage({ type: 'SAVE_SETTINGS', settings: s });
-  setStatus($('saveStatus'), '✓ 已保存', true);
-  setTimeout(() => { $('saveStatus').textContent = ''; }, 2500);
+  flash($('saveStatus'), '✓ 已保存');
 });
 
 $('testBtn').addEventListener('click', async () => {
   setStatus($('testStatus'), '测试中…', true);
   const s = await collectSettings();
-  // 先保存再测试，保证后台用的是最新配置
   await chrome.runtime.sendMessage({ type: 'SAVE_SETTINGS', settings: s });
-  if (s.llm.baseUrl && s.llm.apiKey) {
-    const granted = await ensureOriginPermission(s.llm.baseUrl);
+  const active = activeModel();
+  if (active && active.baseUrl && active.key) {
+    const granted = await ensureOriginPermission(active.baseUrl);
     if (!granted) {
       setStatus($('testStatus'), '❌ 未授权 API 域名访问', false);
       return;
@@ -129,106 +231,22 @@ $('testBtn').addEventListener('click', async () => {
   }
 });
 
-// ---------- 自定义预设（公司中转站等） ----------
-
-const BUILTIN_PRESETS = Array.from(document.querySelectorAll('#presetList button[data-base]'))
-  .map(b => ({ name: b.textContent, baseUrl: b.dataset.base, model: b.dataset.model }));
-
-let customPresets = []; // 从设置里加载
-let savedKeys = {};     // 按 API 地址绑定的 Key：{ [baseUrl]: apiKey }
-
-// 按当前 API 地址带出对应的 Key
-function fillKeyForBaseUrl(baseUrl) {
-  $('apiKey').value = (savedKeys && savedKeys[baseUrl]) || '';
-}
-
-function renderPresets() {
-  const list = $('presetList');
-  // 移除旧的自定义按钮，保留内置按钮和"＋ 自定义"
-  list.querySelectorAll('span.custom-preset').forEach(b => b.remove());
-  const addBtn = $('addPresetBtn');
-  customPresets.forEach((p, idx) => {
-    const wrap = document.createElement('span');
-    wrap.className = 'custom-preset';
-    wrap.style.cssText = 'display:inline-flex;align-items:center;border:1px dashed #d0d4da;border-radius:999px;overflow:hidden;';
-    const btn = document.createElement('button');
-    btn.textContent = p.name;
-    btn.style.cssText = 'border:none;background:transparent;padding:3px 4px 3px 12px;font-size:12px;cursor:pointer;color:#57606a;font-family:inherit;';
-    btn.title = p.baseUrl + ' · ' + p.model;
-    btn.addEventListener('click', () => {
-      $('baseUrl').value = p.baseUrl;
-      $('model').value = p.model;
-      fillKeyForBaseUrl(p.baseUrl); // 切换预设自动带出该地址的 Key
-    });
-    const del = document.createElement('button');
-    del.textContent = '×';
-    del.title = '删除该预设';
-    del.style.cssText = 'border:none;background:transparent;padding:3px 10px 3px 4px;font-size:13px;cursor:pointer;color:#c62828;font-family:inherit;';
-    del.addEventListener('click', async () => {
-      customPresets.splice(idx, 1);
-      await savePresets();
-      renderPresets();
-    });
-    wrap.appendChild(btn);
-    wrap.appendChild(del);
-    list.insertBefore(wrap, addBtn);
-  });
-}
-
-async function savePresets() {
-  await chrome.runtime.sendMessage({ type: 'SAVE_SETTINGS', settings: { presets: customPresets } });
-}
-
-$('addPresetBtn').addEventListener('click', () => {
-  const form = $('presetForm');
-  form.style.display = form.style.display === 'none' ? '' : 'none';
-  $('pName').value = '';
-  $('pBase').value = '';
-  $('pModel').value = '';
-});
-
-$('pCancel').addEventListener('click', () => { $('presetForm').style.display = 'none'; });
-
-$('pSave').addEventListener('click', async () => {
-  const name = $('pName').value.trim();
-  const baseUrl = $('pBase').value.trim().replace(/\/+$/, '');
-  const models = $('pModel').value.split(',').map(m => m.trim()).filter(Boolean);
-  if (!baseUrl || !models.length) {
-    setStatus($('saveStatus'), '❌ 请至少填写 API 地址和模型名称', false);
-    setTimeout(() => { $('saveStatus').textContent = ''; }, 3000);
-    return;
-  }
-  const displayName = name || ('自定义 ' + (customPresets.length + 1));
-  models.forEach((m, i) => {
-    customPresets.push({
-      name: models.length > 1 ? `${displayName}·${m}` : displayName,
-      baseUrl,
-      model: m
-    });
-  });
-  await savePresets();
-  renderPresets();
-  $('presetForm').style.display = 'none';
-  setStatus($('saveStatus'), '✓ 预设已保存，点击预设标签即可填入', true);
-  setTimeout(() => { $('saveStatus').textContent = ''; }, 3000);
-});
-
+// 快速添加：预填表单
 document.querySelectorAll('.preset button[data-base]').forEach(btn => {
   btn.addEventListener('click', () => {
-    $('baseUrl').value = btn.dataset.base;
-    $('model').value = btn.dataset.model;
-    fillKeyForBaseUrl(btn.dataset.base); // 切换预设自动带出该地址的 Key
+    openForm({
+      name: btn.dataset.name,
+      baseUrl: btn.dataset.base,
+      model: btn.dataset.model,
+      key: ''
+    });
   });
 });
 
-// 手动修改 API 地址时，自动带出该地址的 Key
-$('baseUrl').addEventListener('change', () => {
-  fillKeyForBaseUrl($('baseUrl').value.trim().replace(/\/+$/, ''));
-});
-
-$('resetPrompt').addEventListener('click', () => {
-  $('sumPrompt').value = DEFAULT_PROMPT;
-});
+$('addModelBtn').addEventListener('click', () => openForm(null));
+$('mSave').addEventListener('click', saveModelFromForm);
+$('mCancel').addEventListener('click', closeForm);
+$('resetPrompt').addEventListener('click', () => { $('sumPrompt').value = DEFAULT_PROMPT; });
 
 $('clearCache').addEventListener('click', async () => {
   await chrome.runtime.sendMessage({ type: 'TR_CLEAR_CACHE' });

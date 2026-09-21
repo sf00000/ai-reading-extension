@@ -33,7 +33,11 @@ async function loadState() {
   const resp = await chrome.runtime.sendMessage({ type: 'GET_SETTINGS' });
   const s = resp.settings;
   sel.value = s.targetLang;
-  $('meta').textContent = `当前翻译服务：${s.provider === 'google' ? '谷歌翻译' : '大模型 ' + (s.llm.model || '')}`;
+  const active = resp.activeLlm;
+  const hasModel = !!(active && active.baseUrl && active.apiKey);
+  $('meta').textContent = s.provider === 'google'
+    ? `当前翻译服务：谷歌翻译｜总结模型：${hasModel ? (active.name || active.model) : '未配置 ⚠'}`
+    : `当前模型：${hasModel ? (active.name || active.model) + ' · ' + active.model : '未配置 ⚠ 请到设置添加模型'}`;
 
   const tab = await activeTab();
   if (!isNormalPage(tab)) {
