@@ -42,6 +42,8 @@ async function loadSettings() {
   $('model').value = s.llm.model;
   $('sumLang').value = s.summary.lang || '';
   $('sumPrompt').value = s.summary.prompt || DEFAULT_PROMPT;
+  customPresets = Array.isArray(s.presets) ? s.presets : [];
+  renderPresets();
   refreshCacheInfo();
 }
 
@@ -117,7 +119,84 @@ $('testBtn').addEventListener('click', async () => {
   }
 });
 
-document.querySelectorAll('.preset button').forEach(btn => {
+// ---------- 自定义预设（公司中转站等） ----------
+
+const BUILTIN_PRESETS = Array.from(document.querySelectorAll('#presetList button[data-base]'))
+  .map(b => ({ name: b.textContent, baseUrl: b.dataset.base, model: b.dataset.model }));
+
+let customPresets = []; // 从设置里加载
+
+function renderPresets() {
+  const list = $('presetList');
+  // 移除旧的自定义按钮，保留内置按钮和"＋ 自定义"
+  list.querySelectorAll('span.custom-preset').forEach(b => b.remove());
+  const addBtn = $('addPresetBtn');
+  customPresets.forEach((p, idx) => {
+    const wrap = document.createElement('span');
+    wrap.className = 'custom-preset';
+    wrap.style.cssText = 'display:inline-flex;align-items:center;border:1px dashed #d0d4da;border-radius:999px;overflow:hidden;';
+    const btn = document.createElement('button');
+    btn.textContent = p.name;
+    btn.style.cssText = 'border:none;background:transparent;padding:3px 4px 3px 12px;font-size:12px;cursor:pointer;color:#57606a;font-family:inherit;';
+    btn.title = p.baseUrl + ' · ' + p.model;
+    btn.addEventListener('click', () => {
+      $('baseUrl').value = p.baseUrl;
+      $('model').value = p.model;
+    });
+    const del = document.createElement('button');
+    del.textContent = '×';
+    del.title = '删除该预设';
+    del.style.cssText = 'border:none;background:transparent;padding:3px 10px 3px 4px;font-size:13px;cursor:pointer;color:#c62828;font-family:inherit;';
+    del.addEventListener('click', async () => {
+      customPresets.splice(idx, 1);
+      await savePresets();
+      renderPresets();
+    });
+    wrap.appendChild(btn);
+    wrap.appendChild(del);
+    list.insertBefore(wrap, addBtn);
+  });
+}
+
+async function savePresets() {
+  await chrome.runtime.sendMessage({ type: 'SAVE_SETTINGS', settings: { presets: customPresets } });
+}
+
+$('addPresetBtn').addEventListener('click', () => {
+  const form = $('presetForm');
+  form.style.display = form.style.display === 'none' ? '' : 'none';
+  $('pName').value = '';
+  $('pBase').value = '';
+  $('pModel').value = '';
+});
+
+$('pCancel').addEventListener('click', () => { $('presetForm').style.display = 'none'; });
+
+$('pSave').addEventListener('click', async () => {
+  const name = $('pName').value.trim();
+  const baseUrl = $('pBase').value.trim().replace(/\/+$/, '');
+  const models = $('pModel').value.split(',').map(m => m.trim()).filter(Boolean);
+  if (!baseUrl || !models.length) {
+    setStatus($('saveStatus'), '❌ 请至少填写 API 地址和模型名称', false);
+    setTimeout(() => { $('saveStatus').textContent = ''; }, 3000);
+    return;
+  }
+  const displayName = name || ('自定义 ' + (customPresets.length + 1));
+  models.forEach((m, i) => {
+    customPresets.push({
+      name: models.length > 1 ? `${displayName}·${m}` : displayName,
+      baseUrl,
+      model: m
+    });
+  });
+  await savePresets();
+  renderPresets();
+  $('presetForm').style.display = 'none';
+  setStatus($('saveStatus'), '✓ 预设已保存，点击预设标签即可填入', true);
+  setTimeout(() => { $('saveStatus').textContent = ''; }, 3000);
+});
+
+document.querySelectorAll('.preset button[data-base]').forEach(btn => {
   btn.addEventListener('click', () => {
     $('baseUrl').value = btn.dataset.base;
     $('model').value = btn.dataset.model;

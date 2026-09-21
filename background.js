@@ -20,7 +20,8 @@ const DEFAULTS = {
   summary: {
     lang: '', // 空 = 跟随目标语言
     prompt: DEFAULT_SUMMARY_PROMPT
-  }
+  },
+  presets: [] // 用户自定义 API 预设（公司中转站等）：[{name, baseUrl, model}]
 };
 
 const LANG_CODE = {

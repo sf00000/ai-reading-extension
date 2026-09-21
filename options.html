@@ -74,12 +74,29 @@
 
     <div class="card">
       <h2>🤖 大模型 API（OpenAI 兼容格式）</h2>
-      <div class="preset">
+      <div class="preset" id="presetList">
         <button data-base="https://api.deepseek.com" data-model="deepseek-chat">DeepSeek</button>
         <button data-base="https://api.moonshot.cn" data-model="moonshot-v1-8k">Kimi</button>
         <button data-base="https://dashscope.aliyuncs.com/compatible-mode/v1" data-model="qwen-plus">通义千问</button>
         <button data-base="https://open.bigmodel.cn/api/paas/v4" data-model="glm-4-flash">智谱 GLM</button>
         <button data-base="https://api.openai.com/v1" data-model="gpt-4o-mini">OpenAI</button>
+        <button id="addPresetBtn" title="添加自定义预设（如公司中转站/网关）">＋ 自定义</button>
+      </div>
+      <div id="presetForm" style="display:none;border:1px solid #e6e8ec;border-radius:8px;padding:12px;margin-bottom:14px;background:#f9fafc;">
+        <div class="row">
+          <label>预设名称 <span class="hint">（如：公司中转站）</span></label>
+          <input type="text" id="pName" placeholder="公司中转站">
+        </div>
+        <div class="row">
+          <label>API 地址</label>
+          <input type="text" id="pBase" placeholder="https://llm-gateway.company.com/v1">
+        </div>
+        <div class="row">
+          <label>模型名称 <span class="hint">（多个可用逗号分隔，会生成多个预设）</span></label>
+          <input type="text" id="pModel" placeholder="gpt-4o, claude-sonnet-4">
+        </div>
+        <button class="btn" id="pSave" style="margin-right:8px">保存预设</button>
+        <button class="btn ghost" id="pCancel">取消</button>
       </div>
       <div class="row">
         <label>API 地址 <span class="hint">（填到 /v1 或服务商指定的根地址即可，自动拼接 /chat/completions）</span></label>
