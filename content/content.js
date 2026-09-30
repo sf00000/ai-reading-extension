@@ -17,7 +17,8 @@
   // ---------- 悬浮窗 ----------
 
   let panelHost = null;
-  let panelState = { mode: 'translate', text: '', lang: '', running: false };
+  let panelState = { mode: 'translate', text: '', lang: '' };
+  let panelSeq = 0; // 请求序号：请求期间切换模式/语言后，旧请求的结果作废
 
   const PANEL_CSS = `
     :host { all: initial; }
@@ -178,8 +179,8 @@
 
   async function runPanel() {
     const { mode, text, lang } = panelState;
-    if (!text || panelState.running) return;
-    panelState.running = true;
+    if (!text) return;
+    const seq = ++panelSeq;
     setActiveTab(mode);
     setContent(`<div class="loading"><span class="spin"></span>${mode === 'summary' ? '正在总结…' : '正在翻译…'}</div>`);
     setMeta('');
@@ -190,16 +191,16 @@
     }
     try {
       const resp = await chrome.runtime.sendMessage({ type: 'TR_TEXT', mode, text, lang, url: location.href });
+      if (seq !== panelSeq) return; // 请求期间模式/语言/文本已变化，丢弃过期结果
       if (!resp || !resp.ok) throw new Error(resp && resp.error || '请求失败');
       panelState.result = resp.result;
       setContent(renderResult(resp.result));
       setMeta((resp.cached ? '来自缓存 ⚡ · ' : '') + new Date().toLocaleTimeString());
     } catch (e) {
+      if (seq !== panelSeq) return;
       panelState.result = '';
       setContent(`<div class="error">❌ ${String(e.message || e)}</div>`);
       setMeta('');
-    } finally {
-      panelState.running = false;
     }
   }
 
@@ -268,7 +269,6 @@
 
   function collectCandidates(lang) {
     const out = [];
-    const seenText = new Set();
     document.querySelectorAll(BLOCK_SEL).forEach(el => {
       if (el.closest('[data-aitr-ins]') || el.closest('#aitr-panel-host')) return;
       if (el.closest('pre, code, noscript, script, style, textarea, button, a[href^="javascript"]')) return;
@@ -280,8 +280,7 @@
       if (text.length < 2 || text.length > 5000) return;
       if (!el.offsetParent && getComputedStyle(el).position !== 'fixed') return;
       if (shouldSkip(text, lang)) return;
-      if (seenText.has(text)) return;
-      seenText.add(text);
+      // 相同文本不去重：请求阶段会按文本去重，但译文要插入每个出现的节点
       out.push({ el, text });
     });
     return out.slice(0, 400);
@@ -349,23 +348,33 @@
       return;
     }
 
+    // 按文本去重后请求（列表/表格中重复段落只翻译一次），译文回填到每个出现的节点
+    const uniq = [];
+    const uniqIdx = new Map();
+    const elsByUniq = new Map();
+    cands.forEach(c => {
+      if (!uniqIdx.has(c.text)) { uniqIdx.set(c.text, uniq.length); uniq.push(c.text); }
+      const k = uniqIdx.get(c.text);
+      if (!elsByUniq.has(k)) elsByUniq.set(k, []);
+      elsByUniq.get(k).push(c.el);
+    });
+
     pageState = 'running';
-    showPill(`AI 翻译中 0/${cands.length}`);
+    showPill(`AI 翻译中 0/${uniq.length}`);
     const CHUNK = 8;
-    for (let i = 0; i < cands.length; i += CHUNK) {
-      const slice = cands.slice(i, i + CHUNK);
-      showPill(`AI 翻译中 ${i}/${cands.length}`);
+    for (let i = 0; i < uniq.length; i += CHUNK) {
+      showPill(`AI 翻译中 ${i}/${uniq.length}`);
       try {
         const resp = await chrome.runtime.sendMessage({
           type: 'TR_PAGE_BATCH',
-          items: slice.map(c => c.text),
+          items: uniq.slice(i, i + CHUNK),
           lang,
           url: location.href
         });
         if (!resp || !resp.ok) throw new Error(resp && resp.error || '请求失败');
-        slice.forEach((c, j) => {
-          const r = resp.results && resp.results[j];
-          if (r) insertTranslation(c.el, r);
+        (resp.results || []).forEach((r, j) => {
+          const els = elsByUniq.get(i + j);
+          if (r && els) els.forEach(el => insertTranslation(el, r));
         });
       } catch (e) {
         showPill('翻译失败：' + String(e.message || e), true);

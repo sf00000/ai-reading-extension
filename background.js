@@ -109,8 +109,16 @@ function getActiveLlm(s) {
   };
 }
 
+// LLM 的缓存身份：模型名 + 网关地址。同名模型在不同网关可能给出不同结果，
+// 只按模型名区分会导致切换网关后命中另一个网关的旧结果
+function llmCacheProv(s) {
+  const a = getActiveLlm(s);
+  return 'llm:' + (a.model || '') + '@' + hashStr(String(a.baseUrl || '').replace(/\/+$/, ''));
+}
+
 // ---------- 缓存 ----------
 // 键：aitr_cache:<provider>:<lang>:<mode>:<promptHash>:<textHash>_<len>
+// LLM 的 provider 形如 llm:<model>@<网关哈希>；读与写必须用同一个 provider 值
 // 同一链接/同一段落文字 + 同一目标语言 + 同一服务 → 直接命中，不再调大模型
 
 function cacheKey(provider, lang, mode, text, promptHash) {
@@ -314,7 +322,7 @@ async function handleMsg(msg) {
         const atpl = getActiveSummaryTemplate(s);
         const tpl = atpl ? atpl.prompt : (s.summary.prompt || DEFAULT_SUMMARY_PROMPT);
         const prompt = tpl.replaceAll('{{lang}}', sumLang).replaceAll('{{text}}', msg.text);
-        const cacheProv = 'llm:' + (getActiveLlm(s).model || '');
+        const cacheProv = llmCacheProv(s);
         const key = cacheKey(cacheProv, sumLang, 'summary', msg.text, hashStr(tpl));
         const hit = await cacheGet(key);
         if (hit) return { ok: true, result: hit.r, cached: true };
@@ -327,10 +335,9 @@ async function handleMsg(msg) {
         return { ok: true, result: r, cached: false };
       }
 
-      // 翻译（缓存按服务+模型区分，换模型后同段会重新翻译）
+      // 翻译（缓存按服务+模型+网关区分，换模型或换网关后同段会重新翻译）
       const provider = msg.provider || s.provider;
-      const active = getActiveLlm(s);
-      const cacheProv = provider === 'google' ? 'google' : 'llm:' + (active.model || '');
+      const cacheProv = provider === 'google' ? 'google' : llmCacheProv(s);
       const key = cacheKey(cacheProv, lang, 'translate', msg.text, 'x');
       const hit = await cacheGet(key);
       if (hit) return { ok: true, result: hit.r, cached: true, provider };
@@ -342,12 +349,18 @@ async function handleMsg(msg) {
           r = await googleTranslate(msg.text, LANG_CODE[lang] || 'zh-CN');
         } catch (e) {
           // 谷歌被限流时，若配置了大模型则自动降级，保证可用性
-          if (s.llm.apiKey && /限流/.test(String(e && e.message || e))) {
+          if (getActiveLlm(s).apiKey && /限流/.test(String(e && e.message || e))) {
+            // 此前降级翻过的段落直接复用 LLM 缓存，不重复调模型
+            const fk = cacheKey(llmCacheProv(s), lang, 'translate', msg.text, 'x');
+            const fhit = await cacheGet(fk);
+            if (fhit) return { ok: true, result: fhit.r, cached: true, provider: 'llm(谷歌限流自动降级)' };
             r = await llmTranslateOne(s, msg.text, lang);
             usedProvider = 'llm(谷歌限流自动降级)';
-          } else {
-            throw e;
+            // 降级结果按 LLM 身份入缓存，避免之后被误当作谷歌翻译结果命中
+            await cacheSet(fk, { r, ts: Date.now(), u: msg.url || '' });
+            return { ok: true, result: r, cached: false, provider: usedProvider };
           }
+          throw e;
         }
       } else {
         r = await llmTranslateOne(s, msg.text, lang);
@@ -361,12 +374,13 @@ async function handleMsg(msg) {
       const s = await getSettings();
       const lang = msg.lang || s.targetLang;
       const provider = s.provider;
+      const cacheProv = provider === 'google' ? 'google' : llmCacheProv(s);
       const items = msg.items || [];
       const results = new Array(items.length).fill(null);
       const need = [];
 
       for (let i = 0; i < items.length; i++) {
-        const hit = await cacheGet(cacheKey(provider, lang, 'translate', items[i], 'x'));
+        const hit = await cacheGet(cacheKey(cacheProv, lang, 'translate', items[i], 'x'));
         if (hit) results[i] = hit.r;
         else need.push({ i, text: items[i] });
       }
@@ -403,8 +417,6 @@ async function handleMsg(msg) {
           }
         };
 
-        const llmCacheProv = 'llm:' + (getActiveLlm(s).model || '');
-
         if (provider === 'google') {
           const CONC = 2; // 低并发，降低触发谷歌风控的概率
           for (let k = 0; k < need.length; k += CONC) {
@@ -412,17 +424,24 @@ async function handleMsg(msg) {
               try {
                 const r = await googleTranslate(n.text, LANG_CODE[lang] || 'zh-CN');
                 results[n.i] = r;
-                await cacheSet(cacheKey(provider, lang, 'translate', n.text, 'x'), { r, ts: Date.now(), u: msg.url || '' });
+                await cacheSet(cacheKey(cacheProv, lang, 'translate', n.text, 'x'), { r, ts: Date.now(), u: msg.url || '' });
               } catch (e) { firstErr = firstErr || String(e && e.message || e); }
             }));
           }
-          // 谷歌被限流时，配置了大模型的部分自动降级补齐
+          // 谷歌被限流时，配置了大模型的部分自动降级补齐（结果按 LLM 身份入缓存）
           const stillNeed = need.filter(n => !results[n.i]);
           if (stillNeed.length && getActiveLlm(s).apiKey && /限流/.test(firstErr || '')) {
-            await processWithLlm(stillNeed, llmCacheProv);
+            // 之前降级翻过的段落先复用 LLM 缓存
+            const rest = [];
+            for (const n of stillNeed) {
+              const hit = await cacheGet(cacheKey(llmCacheProv(s), lang, 'translate', n.text, 'x'));
+              if (hit) results[n.i] = hit.r;
+              else rest.push(n);
+            }
+            if (rest.length) await processWithLlm(rest, llmCacheProv(s));
           }
         } else {
-          await processWithLlm(need, llmCacheProv);
+          await processWithLlm(need, llmCacheProv(s));
         }
         // 全部失败时明确报错，而不是静默返回空结果
         if (results.every(r => r === null || r === undefined)) {
