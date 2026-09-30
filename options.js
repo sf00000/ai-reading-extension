@@ -221,9 +221,12 @@ async function saveModelFromForm() {
 
 // ---------- 总结模板事件 ----------
 
-$('tplSelect').addEventListener('change', () => {
+$('tplSelect').addEventListener('change', async () => {
   activeTplId = $('tplSelect').value;
   fillTplEditor(activeTpl());
+  // 选中即生效：立即持久化，否则用户直接关闭设置页后后台仍用旧模板
+  await persistTemplates();
+  flash($('saveStatus'), '✓ 已切换，总结立即使用新模板');
 });
 
 $('tplNew').addEventListener('click', () => {
@@ -394,6 +397,12 @@ async function collectSettings() {
 }
 
 $('saveBtn').addEventListener('click', async () => {
+  // 与模板「💾 保存」一致的非空校验：编辑器为空时阻止保存，
+  // 避免静默忽略模板修改却提示已保存
+  if (!$('sumPrompt').value.trim()) {
+    setStatus($('saveStatus'), '❌ 模板内容不能为空，请填写后再保存', false);
+    return;
+  }
   const s = await collectSettings();
   await chrome.runtime.sendMessage({ type: 'SAVE_SETTINGS', settings: s });
   renderTplSelect(); // 模板可能在全局保存时被同步改名，刷新下拉与编辑器显示
