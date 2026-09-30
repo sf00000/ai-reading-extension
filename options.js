@@ -369,6 +369,14 @@ async function refreshCacheInfo() {
 }
 
 async function collectSettings() {
+  // 全局保存前，把模板编辑器的当前内容同步进选中的模板：
+  // 运行时优先读 summaryTemplates，不同步会出现「提示已保存、总结仍用旧模板」
+  const t = activeTpl();
+  if (t) {
+    const name = $('tplName').value.trim();
+    const prompt = $('sumPrompt').value;
+    if (prompt.trim()) { t.name = name || '未命名模板'; t.prompt = prompt; }
+  }
   return {
     targetLang: $('targetLang').value,
     provider: $('provider').value,
@@ -388,6 +396,7 @@ async function collectSettings() {
 $('saveBtn').addEventListener('click', async () => {
   const s = await collectSettings();
   await chrome.runtime.sendMessage({ type: 'SAVE_SETTINGS', settings: s });
+  renderTplSelect(); // 模板可能在全局保存时被同步改名，刷新下拉与编辑器显示
   flash($('saveStatus'), '✓ 已保存');
 });
 

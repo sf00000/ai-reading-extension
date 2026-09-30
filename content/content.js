@@ -169,9 +169,12 @@
     panelHost.shadowRoot.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
   }
 
+  function esc(t) {
+    return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
   function renderResult(t) {
-    const esc = t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    return esc
+    return esc(t)
       .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
       .replace(/`([^`]+)`/g, '<code>$1</code>')
       .replace(/\n/g, '<br>');
@@ -199,7 +202,8 @@
     } catch (e) {
       if (seq !== panelSeq) return;
       panelState.result = '';
-      setContent(`<div class="error">❌ ${String(e.message || e)}</div>`);
+      // 错误信息可能包含网关返回的响应正文，必须转义后再进 innerHTML
+      setContent(`<div class="error">❌ ${esc(String(e.message || e))}</div>`);
       setMeta('');
     }
   }
@@ -267,8 +271,12 @@
     return false;
   }
 
+  // 收集需要翻译的块级节点，按文本去重后返回：
+  // texts 为唯一文本列表（最多 400 条，上限按唯一文本计，避免重复段落挤占名额），
+  // elsByText 记录每个文本出现的全部节点（译文要插入每一处）
   function collectCandidates(lang) {
-    const out = [];
+    const texts = [];
+    const elsByText = new Map();
     document.querySelectorAll(BLOCK_SEL).forEach(el => {
       if (el.closest('[data-aitr-ins]') || el.closest('#aitr-panel-host')) return;
       if (el.closest('pre, code, noscript, script, style, textarea, button, a[href^="javascript"]')) return;
@@ -280,10 +288,14 @@
       if (text.length < 2 || text.length > 5000) return;
       if (!el.offsetParent && getComputedStyle(el).position !== 'fixed') return;
       if (shouldSkip(text, lang)) return;
-      // 相同文本不去重：请求阶段会按文本去重，但译文要插入每个出现的节点
-      out.push({ el, text });
+      if (!elsByText.has(text)) {
+        if (texts.length >= 400) return;
+        elsByText.set(text, []);
+        texts.push(text);
+      }
+      elsByText.get(text).push(el);
     });
-    return out.slice(0, 400);
+    return { texts, elsByText };
   }
 
   function insertTranslation(el, dst) {
@@ -341,39 +353,28 @@
       lang = resp?.settings?.targetLang || lang;
     } catch (e) {}
 
-    const cands = collectCandidates(lang);
-    if (!cands.length) {
+    const { texts, elsByText } = collectCandidates(lang);
+    if (!texts.length) {
       showPill('未找到需要翻译的内容');
       setTimeout(hidePill, 2500);
       return;
     }
 
-    // 按文本去重后请求（列表/表格中重复段落只翻译一次），译文回填到每个出现的节点
-    const uniq = [];
-    const uniqIdx = new Map();
-    const elsByUniq = new Map();
-    cands.forEach(c => {
-      if (!uniqIdx.has(c.text)) { uniqIdx.set(c.text, uniq.length); uniq.push(c.text); }
-      const k = uniqIdx.get(c.text);
-      if (!elsByUniq.has(k)) elsByUniq.set(k, []);
-      elsByUniq.get(k).push(c.el);
-    });
-
     pageState = 'running';
-    showPill(`AI 翻译中 0/${uniq.length}`);
+    showPill(`AI 翻译中 0/${texts.length}`);
     const CHUNK = 8;
-    for (let i = 0; i < uniq.length; i += CHUNK) {
-      showPill(`AI 翻译中 ${i}/${uniq.length}`);
+    for (let i = 0; i < texts.length; i += CHUNK) {
+      showPill(`AI 翻译中 ${i}/${texts.length}`);
       try {
         const resp = await chrome.runtime.sendMessage({
           type: 'TR_PAGE_BATCH',
-          items: uniq.slice(i, i + CHUNK),
+          items: texts.slice(i, i + CHUNK),
           lang,
           url: location.href
         });
         if (!resp || !resp.ok) throw new Error(resp && resp.error || '请求失败');
         (resp.results || []).forEach((r, j) => {
-          const els = elsByUniq.get(i + j);
+          const els = elsByText.get(texts[i + j]);
           if (r && els) els.forEach(el => insertTranslation(el, r));
         });
       } catch (e) {

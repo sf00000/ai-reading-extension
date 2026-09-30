@@ -387,6 +387,7 @@ async function handleMsg(msg) {
 
       if (need.length) {
         let firstErr = null; // 记录第一个失败原因，全部失败时透传给页面
+        let sawRateLimit = false; // 谷歌批次中是否出现过限流（首个错误可能只是普通失败，不能只看首个）
 
         // LLM 批量处理（按条数 ≤8 且字符 ≤3500 分组，批量失败逐条兜底）
         const processWithLlm = async (remaining, cacheProv) => {
@@ -425,12 +426,16 @@ async function handleMsg(msg) {
                 const r = await googleTranslate(n.text, LANG_CODE[lang] || 'zh-CN');
                 results[n.i] = r;
                 await cacheSet(cacheKey(cacheProv, lang, 'translate', n.text, 'x'), { r, ts: Date.now(), u: msg.url || '' });
-              } catch (e) { firstErr = firstErr || String(e && e.message || e); }
+              } catch (e) {
+                const m = String(e && e.message || e);
+                if (/限流/.test(m)) sawRateLimit = true;
+                firstErr = firstErr || m;
+              }
             }));
           }
           // 谷歌被限流时，配置了大模型的部分自动降级补齐（结果按 LLM 身份入缓存）
           const stillNeed = need.filter(n => !results[n.i]);
-          if (stillNeed.length && getActiveLlm(s).apiKey && /限流/.test(firstErr || '')) {
+          if (stillNeed.length && getActiveLlm(s).apiKey && sawRateLimit) {
             // 之前降级翻过的段落先复用 LLM 缓存
             const rest = [];
             for (const n of stillNeed) {

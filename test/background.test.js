@@ -182,3 +182,35 @@ test('整页批量：谷歌限流降级也复用 LLM 缓存', async () => {
   assert.equal(r2.results[0], '批量降级');
   assert.equal(fetchImpl.calls.llm, 1, '第二次降级应复用 LLM 缓存');
 });
+
+test('整页批量：首个错误非限流、后续限流时仍应触发降级', async () => {
+  const chrome = makeChrome();
+  await chrome.storage.local.set({ aitr_settings: Object.assign({}, GATEWAY_A_SETTINGS, { provider: 'google' }) });
+  const calls = { llm: 0, google: 0 };
+  // 按请求正文区分：段落 A 两个端点都返回普通 HTTP 500，段落 B 走限流路径
+  const fetchImpl = async (url, opts) => {
+    if (String(url).includes('chat/completions')) {
+      calls.llm++;
+      const body = JSON.parse(opts.body);
+      const user = body.messages[body.messages.length - 1].content;
+      let arr = null;
+      try {
+        const p = JSON.parse(user);
+        if (Array.isArray(p)) arr = Array.from({ length: p.length }, () => 'LLM兜底');
+      } catch (e) { /* 单文本翻译，非 JSON 数组 */ }
+      return { ok: true, json: async () => ({ choices: [{ message: { content: arr ? JSON.stringify(arr) : 'LLM兜底' } }] }) };
+    }
+    calls.google++;
+    const text = decodeURIComponent(String(opts.body || '').replace(/^q=/, ''));
+    if (text === 'A') return { ok: false, status: 500, text: async () => 'server error' };
+    throw new TypeError('Failed to fetch');
+  };
+  fetchImpl.calls = calls;
+  const api = loadBackground(chrome, fetchImpl);
+
+  const r = await api.handleMsg({ type: 'TR_PAGE_BATCH', items: ['A', 'B'], lang: '简体中文', url: 'u' });
+  assert.equal(r.ok, true);
+  assert.equal(r.results[0], 'LLM兜底', '普通失败的段落也应被 LLM 降级补齐');
+  assert.equal(r.results[1], 'LLM兜底');
+  assert.equal(calls.llm, 1, '批次中出现限流即应触发降级，不能只看首个错误');
+});
